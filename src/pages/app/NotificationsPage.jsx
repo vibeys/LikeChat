@@ -1,4 +1,3 @@
-// src/pages/app/NotificationsPage.jsx
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAuth } from '../../context/AuthContext'
@@ -7,13 +6,12 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   updateDoc,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
-import { acceptGroupInvite, declineGroupInvite } from '../../services/chatService'
+import { acceptGroupInvite } from '../../services/chatService'
 import { formatDate, formatTime, getAvatarColor, getInitials } from '../../lib/utils'
 import { Spinner } from '../../components/UI'
 import {
@@ -21,6 +19,8 @@ import {
   Bell,
   Check,
   CheckCheck,
+  Heart,
+  Image,
   MessageCircle,
   Trash2,
   UserPlus,
@@ -28,6 +28,21 @@ import {
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+function toDateValue(notif) {
+  const ts = notif?.createdAt
+  if (ts?.toDate) return ts.toDate()
+  if (typeof notif?.createdAtMs === 'number') return new Date(notif.createdAtMs)
+  return new Date(0)
+}
+
+function sortNotifs(items) {
+  return [...items].sort((a, b) => {
+    const ta = a?.createdAtMs || a?.createdAt?.toMillis?.() || 0
+    const tb = b?.createdAtMs || b?.createdAt?.toMillis?.() || 0
+    return tb - ta
+  })
+}
 
 export default function NotificationsPage() {
   const { user } = useAuth()
@@ -40,23 +55,25 @@ export default function NotificationsPage() {
   useEffect(() => {
     if (!user?.uid) return
 
-    const q = query(
-      collection(db, 'notifications', user.uid, 'items'),
-      orderBy('createdAt', 'desc')
-    )
+    const q = query(collection(db, 'notifications', user.uid, 'items'))
 
-    const unsub = onSnapshot(q, snap => {
-      setNotifs(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-      setLoading(false)
-    })
+    const unsub = onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        setNotifs(sortNotifs(items))
+        setLoading(false)
+      },
+      err => {
+        console.error('Notification snapshot error:', err)
+        setLoading(false)
+      }
+    )
 
     return () => unsub()
   }, [user?.uid])
 
-  const unreadCount = useMemo(
-    () => notifs.filter(n => !n.read).length,
-    [notifs]
-  )
+  const unreadCount = useMemo(() => notifs.filter(n => !n.read).length, [notifs])
 
   const filtered = useMemo(() => {
     if (filter === 'unread') return notifs.filter(n => !n.read)
@@ -67,8 +84,7 @@ export default function NotificationsPage() {
     const map = new Map()
 
     for (const item of filtered) {
-      const rawDate = item.createdAt?.toDate?.()
-      const label = rawDate ? formatDate(rawDate) : 'Earlier'
+      const label = formatDate(toDateValue(item))
       if (!map.has(label)) map.set(label, [])
       map.get(label).push(item)
     }
@@ -113,20 +129,17 @@ export default function NotificationsPage() {
   }
 
   async function openNotif(notif) {
+    if (notif.type === 'group_invite') return
+
     if (!notif.read) await markRead(notif.id)
 
-    if (notif.type === 'message' && notif.convId) {
-      navigate(`/app/chats/${notif.convId}`)
+    if (notif.type === 'message' || notif.type === 'media' || notif.type === 'reaction') {
+      if (notif.convId) navigate(`/app/chats/${notif.convId}`)
       return
     }
 
     if (notif.type === 'friend_request') {
       navigate('/app/friends')
-      return
-    }
-
-    if (notif.type === 'group_invite' && notif.convId) {
-      navigate(`/app/chats/${notif.convId}`)
     }
   }
 
@@ -138,10 +151,8 @@ export default function NotificationsPage() {
         </button>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={styles.title}>Notifications</h1>
-          <p style={styles.subtitle}>
-            Updates, messages, and invitations
-          </p>
+          <h1 style={styles.headerTitle}>Notifications</h1>
+          <p style={styles.subtitle}>Updates, messages, and invitations</p>
         </div>
 
         {unreadCount > 0 && (
@@ -203,7 +214,6 @@ export default function NotificationsPage() {
 function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
   const navigate = useNavigate()
   const [accepting, setAccepting] = useState(false)
-  const [declining, setDeclining] = useState(false)
 
   const name = notif.fromName || 'Someone'
   const ac = getAvatarColor(name)
@@ -212,6 +222,10 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
     switch (notif.type) {
       case 'message':
         return <MessageCircle size={14} />
+      case 'media':
+        return <Image size={14} />
+      case 'reaction':
+        return <Heart size={14} />
       case 'friend_request':
         return <UserPlus size={14} />
       case 'group_invite':
@@ -225,6 +239,10 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
     switch (notif.type) {
       case 'message':
         return `${name} sent you a message`
+      case 'media':
+        return `${name} sent media`
+      case 'reaction':
+        return `${name} reacted to your message`
       case 'friend_request':
         return `${name} sent you a friend request`
       case 'group_invite':
@@ -234,7 +252,14 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
     }
   }
 
-  async function handleAcceptInvite(e) {
+  function getBody() {
+    if (notif.type === 'group_invite') {
+      return notif.text || `Join "${notif.groupName || 'this group'}"`
+    }
+    return notif.text || ''
+  }
+
+  async function handleJoinInvite(e) {
     e.stopPropagation()
     if (!notif.convId) return
 
@@ -245,26 +270,19 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
       toast.success('Joined group')
       navigate(`/app/chats/${notif.convId}`)
     } catch (err) {
-      toast.error(err?.message || 'Failed to join group')
+      const msg =
+        err?.code === 'permission-denied' || /permissions/i.test(err?.message || '')
+          ? 'Firestore blocked the join. Update your rules for pending members.'
+          : (err?.message || 'Failed to join group')
+      toast.error(msg)
     } finally {
       setAccepting(false)
     }
   }
 
-  async function handleDeclineInvite(e) {
+  function handleLater(e) {
     e.stopPropagation()
-    if (!notif.convId) return
-
-    setDeclining(true)
-    try {
-      await declineGroupInvite(notif.convId, user.uid)
-      await deleteDoc(doc(db, 'notifications', user.uid, 'items', notif.id))
-      toast.success('Invitation declined')
-    } catch (err) {
-      toast.error(err?.message || 'Failed to decline invitation')
-    } finally {
-      setDeclining(false)
-    }
+    toast.success('Invite kept unread')
   }
 
   return (
@@ -293,37 +311,32 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
       <div style={styles.body}>
         <div style={styles.topRow}>
           <div style={styles.iconPill}>{getIcon()}</div>
-          <div style={styles.title}>{getTitle()}</div>
+          <div style={styles.itemTitle}>{getTitle()}</div>
           {!notif.read && <span style={styles.unreadDot} />}
         </div>
 
-        {notif.text && (
-          <div style={styles.text}>{notif.text}</div>
-        )}
+        {getBody() && <div style={styles.text}>{getBody()}</div>}
 
-        <div style={styles.time}>
-          {formatTime(notif.createdAt)}
-        </div>
+        <div style={styles.time}>{formatTime(toDateValue(notif))}</div>
       </div>
 
       <div style={styles.actions}>
         {notif.type === 'group_invite' ? (
           <>
             <button
-              onClick={handleAcceptInvite}
-              disabled={accepting || declining}
+              onClick={handleJoinInvite}
+              disabled={accepting}
               style={{ ...styles.actionBtn, ...styles.acceptBtn }}
-              title="Accept invite"
+              title="Join invite"
             >
               {accepting ? <Spinner size={12} /> : <Check size={14} />}
             </button>
             <button
-              onClick={handleDeclineInvite}
-              disabled={accepting || declining}
+              onClick={handleLater}
               style={{ ...styles.actionBtn, ...styles.declineBtn }}
-              title="Decline invite"
+              title="Keep it unread"
             >
-              {declining ? <Spinner size={12} /> : <X size={14} />}
+              <X size={14} />
             </button>
           </>
         ) : (
@@ -421,7 +434,7 @@ const styles = {
     cursor: 'pointer',
     flexShrink: 0,
   },
-  title: {
+  headerTitle: {
     margin: 0,
     fontSize: '20px',
     fontWeight: 800,
@@ -532,7 +545,7 @@ const styles = {
     justifyContent: 'center',
     flexShrink: 0,
   },
-  title: {
+  itemTitle: {
     fontSize: '14px',
     fontWeight: 800,
     color: 'var(--text-primary)',

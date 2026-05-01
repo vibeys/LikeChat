@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getDatabase } from 'firebase/database'
-import { getMessaging } from 'firebase/messaging'
+import { getMessaging, isSupported } from 'firebase/messaging'
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,9 +16,20 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 
-export const auth      = getAuth(app)
-export const db        = getFirestore(app)
-export const rtdb      = getDatabase(app)
-export const messaging = getMessaging(app)
+export const auth = getAuth(app)
+export const db   = getFirestore(app)
+export const rtdb = getDatabase(app)
+
+// getMessaging() throws on browsers that don't support the Push API
+// (e.g. Firefox without push enabled, Safari < 16, SSR). We guard it
+// so a single unsupported client can't crash the entire app.
+export let messaging = null
+isSupported()
+  .then(supported => {
+    if (supported) messaging = getMessaging(app)
+  })
+  .catch(() => {
+    // Push not supported — messaging stays null, notifications silently disabled
+  })
 
 export default app

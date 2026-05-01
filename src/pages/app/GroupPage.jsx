@@ -2,7 +2,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAuth } from '../../context/AuthContext'
-import { getConversation, updateGroupInfo } from '../../services/chatService'
+import {
+  collection,
+  deleteDoc,
+  doc as fsDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  where,
+} from 'firebase/firestore'
+import { db } from '../../lib/firebase'
+import {
+  deleteGroupConversation,
+  inviteGroupMembers,
+  leaveGroup,
+  removeGroupMember,
+  toggleMute,
+  togglePin,
+  updateGroupInfo,
+} from '../../services/chatService'
 import { searchByUsername } from '../../services/userService'
 import { uploadToCloudinary } from '../../lib/cloudinary'
 import { getInitials, getAvatarColor } from '../../lib/utils'
@@ -12,73 +30,115 @@ import {
   Camera,
   Check,
   Crown,
+  Copy,
   LogOut,
   Plus,
   Search,
+  Shield,
   Trash2,
   UserMinus,
-  UserPlus,
   X,
+  BellOff,
+  Bell,
+  Pin,
+  PinOff,
+  Users,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function GroupPage() {
   const { convId } = useParams()
-  const { user } = useAuth()
-  const navigate = useNavigate()
-  const fileRef = useRef(null)
+  const { user }   = useAuth()
+  const navigate   = useNavigate()
+  const fileRef    = useRef(null)
 
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [convo, setConvo] = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [saving, setSaving]       = useState(false)
+  const [toggling, setToggling]   = useState(false) // separate state for pin/mute so it doesn't lock Save
+  const [convo, setConvo]         = useState(null)
 
-  const [tab, setTab] = useState('info')
+  const [tab, setTab]             = useState('info')
   const [groupName, setGroupName] = useState('')
   const [groupPhoto, setGroupPhoto] = useState('')
   const [photoFile, setPhotoFile] = useState(null)
+  const [photoHover, setPhotoHover] = useState(false)
 
-  const [searchQ, setSearchQ] = useState('')
+  const [searchQ, setSearchQ]     = useState('')
   const [searching, setSearching] = useState(false)
-  const [results, setResults] = useState([])
-  const [selected, setSelected] = useState([])
+  const [results, setResults]     = useState([])
+  const [selected, setSelected]   = useState([])
 
   const isAdmin = useMemo(
     () => !!convo?.admins?.includes(user?.uid),
     [convo?.admins, user?.uid]
   )
 
+  const isPinned = useMemo(
+    () => !!convo?.pinnedBy?.includes(user?.uid),
+    [convo?.pinnedBy, user?.uid]
+  )
+
+  const isMuted = useMemo(
+    () => !!convo?.mutedBy?.includes(user?.uid),
+    [convo?.mutedBy, user?.uid]
+  )
+
   useEffect(() => {
-    let alive = true
+    if (!convId) {
+      navigate('/app/chats', { replace: true })
+      return
+    }
 
-    async function load() {
-      if (!convId) return
-      setLoading(true)
-      try {
-        const data = await getConversation(convId)
-        if (!alive) return
+    setLoading(true)
 
-        if (!data || data.type !== 'group') {
+    const ref  = fsDoc(db, 'conversations', convId)
+    const unsub = onSnapshot(
+      ref,
+      snap => {
+        if (!snap.exists()) {
+          navigate('/app/chats', { replace: true })
+          return
+        }
+
+        const data = { id: snap.id, ...snap.data() }
+
+        if (data.type !== 'group') {
+          navigate('/app/chats', { replace: true })
+          return
+        }
+
+        const members = data.members        || []
+        const pending = data.pendingMembers  || []
+        const admins  = data.admins          || []
+        const visibleToMe =
+          members.includes(user?.uid) ||
+          pending.includes(user?.uid) ||
+          admins.includes(user?.uid)
+
+        if (!visibleToMe && user?.uid) {
           navigate('/app/chats', { replace: true })
           return
         }
 
         setConvo(data)
-        setGroupName(data.groupName || '')
-        setGroupPhoto(data.groupPhoto || '')
+        setGroupName(prev =>
+          prev && prev !== data.groupName ? prev : (data.groupName || '')
+        )
+        setGroupPhoto(prev => {
+          if (photoFile) return prev
+          return data.groupPhoto || ''
+        })
         setLoading(false)
-      } catch {
-        if (alive) {
-          toast.error('Failed to load group')
-          navigate('/app/chats', { replace: true })
-        }
+      },
+      err => {
+        console.error('Group snapshot error:', err)
+        toast.error('Failed to load group')
+        navigate('/app/chats', { replace: true })
       }
-    }
+    )
 
-    load()
-    return () => {
-      alive = false
-    }
-  }, [convId, navigate])
+    return () => unsub()
+  }, [convId, navigate, photoFile, user?.uid])
 
   useEffect(() => {
     return () => {
@@ -90,8 +150,7 @@ export default function GroupPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setPhotoFile(file)
-    const preview = URL.createObjectURL(file)
-    setGroupPhoto(preview)
+    setGroupPhoto(URL.createObjectURL(file))
   }
 
   function toggleSelect(uid) {
@@ -104,16 +163,23 @@ export default function GroupPage() {
     const q = e.target.value
     setSearchQ(q)
 
-    if (!q.trim()) {
-      setResults([])
-      return
-    }
+    if (!q.trim()) { setResults([]); return }
 
     setSearching(true)
     try {
       const res = await searchByUsername(q.trim())
       const list = Array.isArray(res) ? res : []
-      setResults(list.filter(u => !convo?.members?.includes(u.uid) && u.uid !== user.uid))
+      const currentMembers = convo?.members        || []
+      const currentPending = convo?.pendingMembers  || []
+
+      setResults(
+        list.filter(
+          u =>
+            u.uid !== user.uid &&
+            !currentMembers.includes(u.uid) &&
+            !currentPending.includes(u.uid)
+        )
+      )
     } catch {
       toast.error('Search failed')
     } finally {
@@ -123,17 +189,14 @@ export default function GroupPage() {
 
   async function handleSaveInfo() {
     if (!isAdmin) return
-    if (!groupName.trim()) {
-      toast.error('Group name is required')
-      return
-    }
+    if (!groupName.trim()) { toast.error('Group name is required'); return }
 
     setSaving(true)
     try {
       let finalPhoto = convo?.groupPhoto || ''
 
       if (photoFile) {
-        finalPhoto = await uploadToCloudinary(photoFile)
+        finalPhoto = await uploadToCloudinary(photoFile, 'groups')
       } else if (groupPhoto && !groupPhoto.startsWith('blob:')) {
         finalPhoto = groupPhoto
       }
@@ -143,16 +206,10 @@ export default function GroupPage() {
         groupPhoto: finalPhoto,
       })
 
-      setConvo(prev => ({
-        ...prev,
-        groupName: groupName.trim(),
-        groupPhoto: finalPhoto,
-      }))
-
       setPhotoFile(null)
       toast.success('Group updated')
-    } catch {
-      toast.error('Failed to update group')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update group')
     } finally {
       setSaving(false)
     }
@@ -160,45 +217,56 @@ export default function GroupPage() {
 
   async function handleAddMembers() {
     if (!isAdmin) return
-    if (!selected.length) {
-      toast.error('Select at least one member')
-      return
-    }
+    if (!selected.length) { toast.error('Select at least one member'); return }
 
     setSaving(true)
     try {
-      const newMembers = [...new Set([...(convo?.members || []), ...selected])]
-      const newNames = { ...(convo?.memberNames || {}) }
+      const newNames  = { ...(convo?.memberNames  || {}) }
       const newPhotos = { ...(convo?.memberPhotos || {}) }
 
       for (const uid of selected) {
         const found = results.find(u => u.uid === uid)
         if (found) {
-          newNames[uid] = found.displayName || found.username || 'Unknown'
+          newNames[uid]  = found.displayName || found.username || 'Unknown'
           newPhotos[uid] = found.photoURL || ''
         }
       }
 
-      await updateGroupInfo(convId, {
-        members: newMembers,
-        memberNames: newNames,
-        memberPhotos: newPhotos,
-      })
-
-      setConvo(prev => ({
-        ...prev,
-        members: newMembers,
-        memberNames: newNames,
-        memberPhotos: newPhotos,
-      }))
+      await inviteGroupMembers(convId, user.uid, selected, newNames, newPhotos)
 
       setSelected([])
       setSearchQ('')
       setResults([])
       setTab('members')
-      toast.success(`${selected.length} member${selected.length === 1 ? '' : 's'} added`)
-    } catch {
-      toast.error('Failed to add members')
+      toast.success(`${selected.length} invite${selected.length === 1 ? '' : 's'} sent`)
+    } catch (err) {
+      toast.error(err?.message || 'Failed to invite members')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleCancelInvite(uid) {
+    if (!isAdmin) return
+
+    setSaving(true)
+    try {
+      const nextPending = (convo?.pendingMembers || []).filter(id => id !== uid)
+      await updateGroupInfo(convId, { pendingMembers: nextPending })
+
+      // Also delete the pending invite notification for that user
+      const q    = query(
+        collection(db, 'notifications', uid, 'items'),
+        where('convId', '==', convId)
+      )
+      const snap = await getDocs(q)
+      for (const d of snap.docs.filter(d => d.data()?.type === 'group_invite')) {
+        await deleteDoc(d.ref)
+      }
+
+      toast.success('Invite canceled')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to cancel invite')
     } finally {
       setSaving(false)
     }
@@ -206,59 +274,36 @@ export default function GroupPage() {
 
   async function handleRemoveMember(uid) {
     if (!isAdmin) return
-    if (uid === user.uid) {
-      toast.error('Use Leave Group for yourself')
-      return
-    }
+    if (uid === user.uid) { toast.error('Use Leave Group for yourself'); return }
 
     const memberName = convo?.memberNames?.[uid] || 'this member'
     if (!window.confirm(`Remove ${memberName} from the group?`)) return
 
     setSaving(true)
     try {
-      const newMembers = (convo?.members || []).filter(m => m !== uid)
-      const newAdmins = (convo?.admins || []).filter(a => a !== uid)
-
-      await updateGroupInfo(convId, {
-        members: newMembers,
-        admins: newAdmins,
-      })
-
-      setConvo(prev => ({
-        ...prev,
-        members: newMembers,
-        admins: newAdmins,
-      }))
-
+      await removeGroupMember(convId, uid)
       toast.success('Member removed')
-    } catch {
-      toast.error('Failed to remove member')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to remove member')
     } finally {
       setSaving(false)
     }
   }
 
   async function handleToggleAdmin(uid) {
-    if (!isAdmin) return
-    if (uid === user.uid) return
+    if (!isAdmin || uid === user.uid) return
 
     setSaving(true)
     try {
-      const isAdminNow = convo?.admins?.includes(uid)
-      const newAdmins = isAdminNow
-        ? (convo?.admins || []).filter(a => a !== uid)
-        : [...new Set([...(convo?.admins || []), uid])]
+      const currentAdmins = convo?.admins || []
+      const nextAdmins = currentAdmins.includes(uid)
+        ? currentAdmins.filter(a => a !== uid)
+        : [...new Set([...currentAdmins, uid])]
 
-      await updateGroupInfo(convId, { admins: newAdmins })
-
-      setConvo(prev => ({
-        ...prev,
-        admins: newAdmins,
-      }))
-
-      toast.success(isAdminNow ? 'Admin removed' : 'Promoted to admin')
-    } catch {
-      toast.error('Failed to update admin')
+      await updateGroupInfo(convId, { admins: nextAdmins })
+      toast.success(currentAdmins.includes(uid) ? 'Admin removed' : 'Promoted to admin')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update admin')
     } finally {
       setSaving(false)
     }
@@ -269,18 +314,11 @@ export default function GroupPage() {
 
     setSaving(true)
     try {
-      const newMembers = (convo?.members || []).filter(m => m !== user.uid)
-      const newAdmins = (convo?.admins || []).filter(a => a !== user.uid)
-
-      await updateGroupInfo(convId, {
-        members: newMembers,
-        admins: newAdmins,
-      })
-
+      await leaveGroup(convId, user.uid)
       toast.success('You left the group')
       navigate('/app/chats', { replace: true })
-    } catch {
-      toast.error('Failed to leave group')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to leave group')
     } finally {
       setSaving(false)
     }
@@ -292,22 +330,55 @@ export default function GroupPage() {
 
     setSaving(true)
     try {
-      await updateGroupInfo(convId, { deleted: true })
+      await deleteGroupConversation(convId)
       toast.success('Group deleted')
       navigate('/app/chats', { replace: true })
-    } catch {
-      toast.error('Failed to delete group')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to delete group')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleCopyGroupId() {
+    try {
+      await navigator.clipboard.writeText(convId)
+      toast.success('Group ID copied')
+    } catch {
+      toast.error('Copy failed')
+    }
+  }
+
+  async function handleTogglePin() {
+    if (!convo?.id) return
+    setToggling(true)
+    try {
+      await togglePin(convo.id, user.uid, !isPinned)
+      toast.success(isPinned ? 'Unpinned' : 'Pinned')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update pin')
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  async function handleToggleMute() {
+    if (!convo?.id) return
+    setToggling(true)
+    try {
+      await toggleMute(convo.id, user.uid, !isMuted)
+      toast.success(isMuted ? 'Unmuted' : 'Muted')
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update mute')
+    } finally {
+      setToggling(false)
     }
   }
 
   if (loading) {
     return (
       <div style={styles.page}>
-        <div style={styles.center}>
-          <Spinner />
-        </div>
+        <div style={styles.center}><Spinner /></div>
       </div>
     )
   }
@@ -322,50 +393,58 @@ export default function GroupPage() {
     )
   }
 
-  const members = convo?.members || []
-  const admins = convo?.admins || []
-  const canEdit = isAdmin
+  const members        = convo?.members        || []
+  const admins         = convo?.admins         || []
+  const pendingMembers = convo?.pendingMembers  || []
+  const canEdit        = isAdmin
 
   return (
     <div style={styles.page}>
+      {/* ── Header ── */}
       <div style={styles.header}>
         <button onClick={() => navigate(-1)} style={styles.backBtn} title="Back">
           <ArrowLeft size={18} />
         </button>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={styles.title}>Group Settings</h1>
-          <p style={styles.subtitle}>
-            Manage the group, members, and permissions
-          </p>
+          <h1 style={styles.pageTitle}>Group Settings</h1>
+          <p style={styles.subtitle}>Manage members, permissions, and group details</p>
         </div>
 
         {canEdit && (
-          <button onClick={handleSaveInfo} disabled={saving} style={styles.primaryBtn}>
+          <button
+            onClick={handleSaveInfo}
+            disabled={saving}
+            style={{ ...styles.primaryBtn, opacity: saving ? 0.6 : 1 }}
+          >
             {saving ? 'Saving...' : 'Save changes'}
           </button>
         )}
       </div>
 
+      {/* ── Tabs ── */}
       <div style={styles.tabs}>
-        <TabButton active={tab === 'info'} onClick={() => setTab('info')}>Info</TabButton>
+        <TabButton active={tab === 'info'}    onClick={() => setTab('info')}>Info</TabButton>
         <TabButton active={tab === 'members'} onClick={() => setTab('members')}>
-          Members
+          Members ({members.length})
         </TabButton>
         {canEdit && (
-          <TabButton active={tab === 'add'} onClick={() => setTab('add')}>
-            + Add
-          </TabButton>
+          <TabButton active={tab === 'add'} onClick={() => setTab('add')}>+ Invite</TabButton>
         )}
       </div>
 
       <div style={styles.content}>
+
+        {/* ── Info tab ── */}
         {tab === 'info' && (
           <div style={styles.sectionCard}>
+            {/* Photo */}
             <div style={styles.photoWrap}>
               <button
                 type="button"
                 onClick={() => canEdit && fileRef.current?.click()}
+                onMouseEnter={() => setPhotoHover(true)}
+                onMouseLeave={() => setPhotoHover(false)}
                 style={{
                   ...styles.photoButton,
                   cursor: canEdit ? 'pointer' : 'default',
@@ -373,24 +452,26 @@ export default function GroupPage() {
                 title={canEdit ? 'Change group photo' : 'Group photo'}
               >
                 {groupPhoto ? (
-                  <img
-                    src={groupPhoto}
-                    alt={groupName}
-                    style={styles.photoImg}
-                  />
+                  <img src={groupPhoto} alt={groupName} style={styles.photoImg} />
                 ) : (
-                  <div style={{ ...styles.photoFallback, background: getAvatarColor(groupName).bg, color: getAvatarColor(groupName).text }}>
+                  <div style={{
+                    ...styles.photoFallback,
+                    background: getAvatarColor(groupName).bg,
+                    color:      getAvatarColor(groupName).text,
+                  }}>
                     {getInitials(groupName || 'Group')}
                   </div>
                 )}
 
                 {canEdit && (
-                  <span style={styles.photoOverlay}>
+                  <span style={{
+                    ...styles.photoOverlay,
+                    opacity: photoHover ? 1 : 0,
+                  }}>
                     <Camera size={18} />
                   </span>
                 )}
               </button>
-
               <input
                 ref={fileRef}
                 type="file"
@@ -400,6 +481,7 @@ export default function GroupPage() {
               />
             </div>
 
+            {/* Group name */}
             <div style={styles.fieldBlock}>
               <label style={styles.label}>Group name</label>
               <input
@@ -407,44 +489,67 @@ export default function GroupPage() {
                 onChange={e => setGroupName(e.target.value)}
                 disabled={!canEdit}
                 placeholder="Enter group name"
-                style={{
-                  ...styles.input,
-                  opacity: canEdit ? 1 : 0.85,
-                }}
+                style={{ ...styles.input, opacity: canEdit ? 1 : 0.75 }}
               />
             </div>
 
+            {/* Stats */}
             <div style={styles.infoGrid}>
               <InfoCard label="Members" value={members.length} />
-              <InfoCard label="Admins" value={admins.length || 0} />
+              <InfoCard label="Admins"  value={admins.length}  />
             </div>
 
+            {/* Actions */}
             <div style={styles.actionRow}>
-              <button onClick={() => setTab('members')} style={styles.secondaryBtn}>
-                View members
+              <button onClick={handleCopyGroupId} style={styles.secondaryBtn}>
+                <Copy size={16} /> Copy ID
               </button>
 
-              {canEdit ? (
-                <>
-                  <button onClick={handleLeaveGroup} style={styles.warningBtn}>
-                    <LogOut size={16} />
-                    Leave group
-                  </button>
-                  <button onClick={handleDeleteGroup} style={styles.dangerBtn}>
-                    <Trash2 size={16} />
-                    Delete group
-                  </button>
-                </>
-              ) : (
-                <button onClick={handleLeaveGroup} style={styles.warningBtn}>
-                  <LogOut size={16} />
-                  Leave group
+              <button
+                onClick={handleTogglePin}
+                disabled={toggling}
+                style={{ ...styles.secondaryBtn, opacity: toggling ? 0.6 : 1 }}
+              >
+                {isPinned ? <PinOff size={16} /> : <Pin size={16} />}
+                {isPinned ? 'Unpin' : 'Pin'}
+              </button>
+
+              <button
+                onClick={handleToggleMute}
+                disabled={toggling}
+                style={{ ...styles.secondaryBtn, opacity: toggling ? 0.6 : 1 }}
+              >
+                {isMuted ? <Bell size={16} /> : <BellOff size={16} />}
+                {isMuted ? 'Unmute' : 'Mute'}
+              </button>
+
+              <button onClick={() => setTab('members')} style={styles.secondaryBtn}>
+                <Users size={16} /> Members
+              </button>
+
+              <button
+                onClick={handleLeaveGroup}
+                disabled={saving}
+                style={{ ...styles.warningBtn, opacity: saving ? 0.6 : 1 }}
+              >
+                <LogOut size={16} /> Leave group
+              </button>
+
+              {/* Only admins see Delete */}
+              {canEdit && (
+                <button
+                  onClick={handleDeleteGroup}
+                  disabled={saving}
+                  style={{ ...styles.dangerBtn, opacity: saving ? 0.6 : 1 }}
+                >
+                  <Trash2 size={16} /> Delete group
                 </button>
               )}
             </div>
           </div>
         )}
 
+        {/* ── Members tab ── */}
         {tab === 'members' && (
           <div style={styles.sectionCard}>
             <div style={styles.sectionHeader}>
@@ -458,11 +563,11 @@ export default function GroupPage() {
 
             <div style={styles.memberList}>
               {members.map(uid => {
-                const name = convo?.memberNames?.[uid] || 'Unknown user'
+                const name  = convo?.memberNames?.[uid]  || 'Unknown user'
                 const photo = convo?.memberPhotos?.[uid]
                 const admin = admins.includes(uid)
-                const me = uid === user.uid
-                const ac = getAvatarColor(name)
+                const me    = uid === user.uid
+                const ac    = getAvatarColor(name)
 
                 return (
                   <div key={uid} style={styles.memberCard}>
@@ -477,20 +582,15 @@ export default function GroupPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={styles.memberNameRow}>
                         <span style={styles.memberName}>{name}</span>
-                        {me && <span style={styles.youPill}>You</span>}
-                      </div>
-
-                      <div style={styles.memberMeta}>
-                        @{convo?.memberUsernames?.[uid] || uid.slice(0, 8)}
-                      </div>
-
-                      <div style={styles.memberBadges}>
+                        {me    && <span style={styles.youPill}>You</span>}
                         {admin && (
                           <span style={styles.adminPill}>
-                            <Crown size={12} />
-                            Admin
+                            <Crown size={11} /> Admin
                           </span>
                         )}
+                      </div>
+                      <div style={styles.memberMeta}>
+                        @{convo?.memberUsernames?.[uid] || uid.slice(0, 8)}
                       </div>
                     </div>
 
@@ -501,7 +601,7 @@ export default function GroupPage() {
                           style={styles.iconActionBtn}
                           title={admin ? 'Remove admin' : 'Make admin'}
                         >
-                          <Crown size={16} />
+                          <Shield size={16} />
                         </button>
                         <button
                           onClick={() => handleRemoveMember(uid)}
@@ -516,26 +616,77 @@ export default function GroupPage() {
                 )
               })}
             </div>
+
+            {/* Pending invites section */}
+            {pendingMembers.length > 0 && (
+              <>
+                <div style={{ height: '20px' }} />
+                <div style={styles.sectionHeader}>
+                  <div>
+                    <h2 style={styles.sectionTitle}>Pending invites</h2>
+                    <p style={styles.sectionSub}>
+                      {pendingMembers.length} invite{pendingMembers.length === 1 ? '' : 's'} waiting
+                    </p>
+                  </div>
+                </div>
+
+                <div style={styles.memberList}>
+                  {pendingMembers.map(uid => {
+                    const name  = convo?.memberNames?.[uid]  || 'Pending user'
+                    const photo = convo?.memberPhotos?.[uid]
+                    const ac    = getAvatarColor(name)
+
+                    return (
+                      <div key={uid} style={styles.memberCard}>
+                        {photo ? (
+                          <img src={photo} alt={name} style={styles.memberAvatar} />
+                        ) : (
+                          <div style={{ ...styles.memberAvatar, background: ac.bg, color: ac.text }}>
+                            {getInitials(name)}
+                          </div>
+                        )}
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={styles.memberNameRow}>
+                            <span style={styles.memberName}>{name}</span>
+                            <span style={styles.pendingPill}>Pending</span>
+                          </div>
+                          <div style={styles.memberMeta}>
+                            Invite sent · @{convo?.memberUsernames?.[uid] || uid.slice(0, 8)}
+                          </div>
+                        </div>
+
+                        {canEdit && (
+                          <div style={styles.memberActions}>
+                            <button
+                              onClick={() => handleCancelInvite(uid)}
+                              style={{ ...styles.iconActionBtn, ...styles.iconActionDanger }}
+                              title="Cancel invite"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
         )}
 
+        {/* ── Add/Invite tab ── */}
         {tab === 'add' && canEdit && (
           <div style={styles.sectionCard}>
             <div style={styles.sectionHeader}>
               <div>
-                <h2 style={styles.sectionTitle}>Add members</h2>
-                <p style={styles.sectionSub}>
-                  Search users and add them to this group
-                </p>
+                <h2 style={styles.sectionTitle}>Invite members</h2>
+                <p style={styles.sectionSub}>Search users and send a pending invite</p>
               </div>
-
               {selected.length > 0 && (
-                <button
-                  onClick={handleAddMembers}
-                  disabled={saving}
-                  style={styles.primaryBtn}
-                >
-                  {saving ? 'Adding...' : `Add ${selected.length}`}
+                <button onClick={handleAddMembers} disabled={saving} style={styles.primaryBtn}>
+                  {saving ? 'Inviting...' : `Invite ${selected.length}`}
                 </button>
               )}
             </div>
@@ -554,12 +705,8 @@ export default function GroupPage() {
 
             {selected.length > 0 && (
               <div style={styles.selectedRow}>
-                <span style={styles.selectedText}>
-                  {selected.length} selected
-                </span>
-                <button onClick={() => setSelected([])} style={styles.clearBtn}>
-                  Clear
-                </button>
+                <span style={styles.selectedText}>{selected.length} selected</span>
+                <button onClick={() => setSelected([])} style={styles.clearBtn}>Clear</button>
               </div>
             )}
 
@@ -569,7 +716,7 @@ export default function GroupPage() {
               ) : (
                 results.map((u, idx) => {
                   const isSelected = selected.includes(u.uid)
-                  const ac = getAvatarColor(u.displayName || u.username || '')
+                  const ac         = getAvatarColor(u.displayName || u.username || '')
 
                   return (
                     <button
@@ -578,7 +725,7 @@ export default function GroupPage() {
                       style={{
                         ...styles.resultCard,
                         borderColor: isSelected ? 'var(--primary)' : 'var(--border)',
-                        background: isSelected ? 'var(--primary-light)' : 'var(--bg-primary)',
+                        background:  isSelected ? 'var(--primary-light)' : 'var(--bg-primary)',
                         animationDelay: `${idx * 0.04}s`,
                       }}
                     >
@@ -597,13 +744,9 @@ export default function GroupPage() {
 
                       <div style={styles.resultRight}>
                         {isSelected ? (
-                          <span style={styles.checkPill}>
-                            <Check size={13} />
-                          </span>
+                          <span style={styles.checkPill}><Check size={13} /></span>
                         ) : (
-                          <span style={styles.addPill}>
-                            <Plus size={13} />
-                          </span>
+                          <span style={styles.addPill}><Plus size={13} /></span>
                         )}
                       </div>
                     </button>
@@ -616,7 +759,7 @@ export default function GroupPage() {
 
         {tab === 'add' && !canEdit && (
           <div style={styles.sectionCard}>
-            <EmptySearch text="Only group admins can add members." />
+            <EmptySearch text="Only group admins can invite members." />
           </div>
         )}
       </div>
@@ -630,8 +773,8 @@ function TabButton({ active, onClick, children }) {
       onClick={onClick}
       style={{
         ...styles.tabBtn,
-        background: active ? 'var(--primary)' : 'transparent',
-        color: active ? '#fff' : 'var(--text-secondary)',
+        background:  active ? 'var(--primary)' : 'transparent',
+        color:       active ? '#fff' : 'var(--text-secondary)',
         borderColor: active ? 'var(--primary)' : 'var(--border)',
       }}
     >
@@ -652,9 +795,7 @@ function InfoCard({ label, value }) {
 function EmptySearch({ text }) {
   return (
     <div style={styles.emptyState}>
-      <div style={styles.emptyIconWrap}>
-        <Search size={34} />
-      </div>
+      <div style={styles.emptyIconWrap}><Search size={34} /></div>
       <div style={styles.emptyTitle}>Nothing here</div>
       <div style={styles.emptyText}>{text}</div>
     </div>
@@ -697,7 +838,7 @@ const styles = {
     cursor: 'pointer',
     flexShrink: 0,
   },
-  title: {
+  pageTitle: {
     margin: 0,
     fontSize: '20px',
     fontWeight: 800,
@@ -722,6 +863,7 @@ const styles = {
     justifyContent: 'center',
     gap: '8px',
     flexShrink: 0,
+    transition: 'opacity 0.15s',
   },
   secondaryBtn: {
     border: '1px solid var(--border)',
@@ -736,10 +878,11 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
+    transition: 'opacity 0.15s',
   },
   warningBtn: {
-    border: '1px solid rgba(245, 158, 11, 0.26)',
-    background: 'rgba(245, 158, 11, 0.08)',
+    border: '1px solid rgba(245,158,11,0.26)',
+    background: 'rgba(245,158,11,0.08)',
     color: 'var(--text-primary)',
     borderRadius: '12px',
     padding: '10px 14px',
@@ -750,11 +893,12 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
+    transition: 'opacity 0.15s',
   },
   dangerBtn: {
-    border: '1px solid rgba(239, 68, 68, 0.28)',
-    background: 'rgba(239, 68, 68, 0.08)',
-    color: 'var(--text-primary)',
+    border: '1px solid rgba(239,68,68,0.28)',
+    background: 'rgba(239,68,68,0.08)',
+    color: 'var(--danger, #ef4444)',
     borderRadius: '12px',
     padding: '10px 14px',
     fontSize: '13px',
@@ -764,6 +908,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
+    transition: 'opacity 0.15s',
   },
   tabs: {
     display: 'flex',
@@ -835,14 +980,12 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.28)',
+    background: 'rgba(0,0,0,0.38)',
     color: '#fff',
-    opacity: 0,
     transition: 'opacity 0.15s ease',
+    borderRadius: '50%',
   },
-  fieldBlock: {
-    marginBottom: '16px',
-  },
+  fieldBlock: { marginBottom: '16px' },
   label: {
     display: 'block',
     fontSize: '12px',
@@ -859,6 +1002,7 @@ const styles = {
     color: 'var(--text-primary)',
     fontSize: '14px',
     outline: 'none',
+    boxSizing: 'border-box',
   },
   infoGrid: {
     display: 'grid',
@@ -931,12 +1075,14 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     fontWeight: 900,
+    fontSize: '15px',
   },
   memberNameRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '6px',
     minWidth: 0,
+    flexWrap: 'wrap',
   },
   memberName: {
     fontSize: '14px',
@@ -951,19 +1097,23 @@ const styles = {
     color: 'var(--text-tertiary)',
     marginTop: '2px',
   },
-  memberBadges: {
-    display: 'flex',
-    gap: '6px',
-    marginTop: '6px',
-    flexWrap: 'wrap',
-  },
   youPill: {
     fontSize: '11px',
     fontWeight: 800,
     color: 'var(--primary)',
     background: 'var(--primary-light)',
     borderRadius: '999px',
-    padding: '4px 8px',
+    padding: '3px 8px',
+    flexShrink: 0,
+  },
+  pendingPill: {
+    fontSize: '11px',
+    fontWeight: 800,
+    color: 'var(--text-secondary)',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: '999px',
+    padding: '3px 8px',
     flexShrink: 0,
   },
   adminPill: {
@@ -975,7 +1125,8 @@ const styles = {
     color: 'var(--primary)',
     background: 'var(--primary-light)',
     borderRadius: '999px',
-    padding: '4px 8px',
+    padding: '3px 8px',
+    flexShrink: 0,
   },
   memberActions: {
     display: 'flex',
@@ -994,9 +1145,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconActionDanger: {
-    color: 'var(--danger)',
-  },
+  iconActionDanger: { color: 'var(--danger, #ef4444)' },
   searchBar: {
     display: 'flex',
     alignItems: 'center',
@@ -1063,10 +1212,9 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     fontWeight: 900,
+    fontSize: '15px',
   },
-  resultRight: {
-    flexShrink: 0,
-  },
+  resultRight: { flexShrink: 0 },
   checkPill: {
     width: '24px',
     height: '24px',

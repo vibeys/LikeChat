@@ -3,12 +3,13 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 import { goOnline } from '../lib/presence'
+import { initNotifications } from '../services/notificationService'
 
 const AuthContext = createContext(null)
 export function useAuth() { return useContext(AuthContext) }
 
 export function AuthProvider({ children }) {
-  const [user, setUser]     = useState(null)
+  const [user, setUser]       = useState(null)
   const [loading, setLoading] = useState(true)
 
   async function buildUser(firebaseUser) {
@@ -34,16 +35,30 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubNotif = () => {}
+
+    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Clean up previous notification listener before setting up a new one
+      unsubNotif()
+
       if (firebaseUser) {
         const userData = await buildUser(firebaseUser)
         setUser(userData)
         goOnline(firebaseUser.uid)
+
+        // Request FCM permission, save token, and wire up foreground toast listener
+        unsubNotif = initNotifications(firebaseUser.uid) ?? (() => {})
       } else {
         setUser(null)
       }
+
       setLoading(false)
     })
+
+    return () => {
+      unsubAuth()
+      unsubNotif()
+    }
   }, [])
 
   async function refreshUser() {

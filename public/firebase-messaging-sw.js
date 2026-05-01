@@ -25,6 +25,7 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const convId = event.notification.data?.convId
-  const url = convId ? `/chats/${convId}` : '/chats'
+  // Fixed: was '/chats/' which doesn't match your app's route structure
+  const url = convId ? `/app/chats/${convId}` : '/app/chats'
   event.waitUntil(clients.openWindow(url))
 })

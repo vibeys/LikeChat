@@ -1,12 +1,18 @@
 // src/pages/app/AppShell.jsx
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router'
+import { onSnapshot, collection, query, orderBy } from 'firebase/firestore'
 import { useAuth } from '../../context/AuthContext'
 import { watchConversations, createGroupConv } from '../../services/chatService'
 import { watchUserPresence } from '../../lib/presence'
 import { formatTime, getInitials, getAvatarColor } from '../../lib/utils'
 import { logout } from '../../services/authService'
 import { searchByUsername } from '../../services/userService'
+import {
+  deleteNotification,
+} from '../../services/notificationService'
+import { acceptGroupInvite } from '../../services/chatService'
+import { db } from '../../lib/firebase'
 import toast from 'react-hot-toast'
 
 const NAV = [
@@ -26,6 +32,10 @@ export default function AppShell() {
   const [filter, setFilter] = useState('all')
   const [presence, setPresence] = useState({})
   const [showNewGroup, setShowNewGroup] = useState(false)
+  const [notifUnread, setNotifUnread] = useState(0)
+
+  const notifSeenRef = useRef(new Set())
+  const notifBootedRef = useRef(false)
 
   const isChatListRoute = location.pathname === '/app/chats'
   const isChatThreadRoute = /^\/app\/chats\/[^/]+/.test(location.pathname)
@@ -44,6 +54,7 @@ export default function AppShell() {
 
   useEffect(() => {
     if (!convos.length || !user?.uid) return
+
     const uids = [
       ...new Set(
         convos.flatMap(c => c.members ?? []).filter(uid => uid !== user.uid)
@@ -56,6 +67,244 @@ export default function AppShell() {
 
     return () => unsubs.forEach(fn => fn())
   }, [convos, user?.uid])
+
+  useEffect(() => {
+    if (!user?.uid) return
+
+    const q = query(
+      collection(db, 'notifications', user.uid, 'items'),
+      orderBy('createdAt', 'desc')
+    )
+
+    const unsub = onSnapshot(q, snap => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      setNotifUnread(items.filter(n => !n.read).length)
+
+      if (!notifBootedRef.current) {
+        items.forEach(n => notifSeenRef.current.add(n.id))
+        notifBootedRef.current = true
+        return
+      }
+
+      snap.docChanges().forEach(change => {
+        if (change.type !== 'added') return
+
+        const notif = { id: change.doc.id, ...change.doc.data() }
+        if (notifSeenRef.current.has(notif.id)) return
+        notifSeenRef.current.add(notif.id)
+
+        if (notif.read) return
+        showPopupNotif(notif)
+      })
+
+      items.forEach(n => notifSeenRef.current.add(n.id))
+    })
+
+    return () => unsub()
+  }, [user?.uid])
+
+  function showPopupNotif(notif) {
+    const name = notif.fromName || 'Someone'
+
+    if (notif.type === 'group_invite') {
+      toast.custom(
+        t => (
+          <div
+            style={{
+              width: 'min(360px, calc(100vw - 24px))',
+              borderRadius: '16px',
+              border: '1px solid var(--border)',
+              background: 'var(--bg-primary)',
+              boxShadow: '0 14px 40px rgba(0,0,0,0.18)',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+              color: 'var(--text-primary)',
+            }}
+            onClick={() => {
+              if (notif.convId) navigate(`/app/notifications`)
+              toast.dismiss(t.id)
+            }}
+          >
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <div
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '12px',
+                  background: 'var(--primary-light)',
+                  color: 'var(--primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <span className="material-icons" style={{ fontSize: '20px' }}>
+                  group
+                </span>
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '3px' }}>
+                  {notif.title || `${name} invited you to a group`}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+                  {notif.text || `Join "${notif.groupName || 'this group'}"`}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={async e => {
+                  e.stopPropagation()
+                  if (!notif.convId) return
+                  try {
+                    await acceptGroupInvite(notif.convId, user.uid)
+                    await deleteNotification(user.uid, notif.id)
+                    toast.dismiss(t.id)
+                    toast.success('Joined group')
+                    navigate(`/app/chats/${notif.convId}`)
+                  } catch (err) {
+                    toast.error(err?.message || 'Failed to join group')
+                  }
+                }}
+                style={{
+                  border: 'none',
+                  background: 'var(--primary)',
+                  color: '#fff',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Join
+              </button>
+
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  toast.dismiss(t.id)
+                }}
+                style={{
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        ),
+        { duration: 7000 }
+      )
+      return
+    }
+
+    const openLabel =
+      notif.type === 'friend_request' ? 'Open friends' :
+      notif.type === 'reaction' ? 'Open chat' :
+      notif.type === 'media' ? 'Open chat' :
+      'Open'
+
+    const body =
+      notif.type === 'friend_request'
+        ? 'You have a new friend request.'
+        : notif.type === 'reaction'
+          ? `${name} reacted to your message.`
+          : notif.type === 'media'
+            ? `${name} sent media in a chat.`
+            : notif.text || `${name} sent you a message.`
+
+    toast.custom(
+      t => (
+        <div
+          style={{
+            width: 'min(360px, calc(100vw - 24px))',
+            borderRadius: '16px',
+            border: '1px solid var(--border)',
+            background: 'var(--bg-primary)',
+            boxShadow: '0 14px 40px rgba(0,0,0,0.18)',
+            padding: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            color: 'var(--text-primary)',
+          }}
+          onClick={() => {
+            toast.dismiss(t.id)
+            if (notif.type === 'friend_request') navigate('/app/friends')
+            else if (notif.convId) navigate(`/app/chats/${notif.convId}`)
+            else navigate('/app/notifications')
+          }}
+        >
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            <div
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '12px',
+                background: 'var(--primary-light)',
+                color: 'var(--primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <span className="material-icons" style={{ fontSize: '20px' }}>
+                notifications
+              </span>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '3px' }}>
+                {notif.title || name}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+                {body}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                toast.dismiss(t.id)
+                if (notif.type === 'friend_request') navigate('/app/friends')
+                else if (notif.convId) navigate(`/app/chats/${notif.convId}`)
+                else navigate('/app/notifications')
+              }}
+              style={{
+                border: 'none',
+                background: 'var(--primary)',
+                color: '#fff',
+                borderRadius: '10px',
+                padding: '8px 12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              {openLabel}
+            </button>
+          </div>
+        </div>
+      ),
+      { duration: 5000 }
+    )
+  }
 
   async function handleLogout() {
     try {
@@ -205,7 +454,6 @@ export default function AppShell() {
         }
       `}</style>
 
-      {/* SIDEBAR (desktop only) */}
       <aside className="desktop-sidebar hide-mobile">
         <button
           onClick={() => navigate('/app/chats')}
@@ -284,9 +532,34 @@ export default function AppShell() {
                   }}
                 />
               )}
+
               <span className="material-icons" style={{ fontSize: '22px' }}>
                 {icon}
               </span>
+
+              {id === 'notifs' && notifUnread > 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '6px',
+                    right: '6px',
+                    minWidth: '16px',
+                    height: '16px',
+                    borderRadius: '999px',
+                    background: 'var(--danger)',
+                    color: '#fff',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0 4px',
+                    boxShadow: '0 0 0 2px var(--bg-primary)',
+                  }}
+                >
+                  {notifUnread > 9 ? '9+' : notifUnread}
+                </span>
+              )}
             </button>
           )
         })}
@@ -324,11 +597,7 @@ export default function AppShell() {
         </button>
       </aside>
 
-      {/* CONVERSATION LIST */}
-      <div
-        className={`conversation-panel ${isChatListRoute ? 'mobile-visible' : 'mobile-hidden'}`}
-      >
-        {/* Header */}
+      <div className={`conversation-panel ${isChatListRoute ? 'mobile-visible' : 'mobile-hidden'}`}>
         <div
           style={{
             padding: '14px 16px 10px',
@@ -355,7 +624,6 @@ export default function AppShell() {
           </div>
         </div>
 
-        {/* Search */}
         <div style={{ padding: '10px 12px 8px', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
             <span
@@ -394,7 +662,6 @@ export default function AppShell() {
           </div>
         </div>
 
-        {/* Filter tabs */}
         <div style={{ display: 'flex', gap: '6px', padding: '0 12px 10px', flexShrink: 0 }}>
           {['all', 'unread', 'groups'].map(tab => (
             <button
@@ -419,7 +686,6 @@ export default function AppShell() {
           ))}
         </div>
 
-        {/* Conversation list */}
         <div className="conversation-scroll" style={{ flex: 1, overflowY: 'auto' }}>
           {pinned.length > 0 && (
             <>
@@ -505,10 +771,7 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
-      <div
-        className={`chat-main ${isChatListRoute ? 'mobile-hidden' : 'mobile-visible'}`}
-      >
+      <div className={`chat-main ${isChatListRoute ? 'mobile-hidden' : 'mobile-visible'}`}>
         {location.pathname !== '/app/chats' ? (
           <Outlet />
         ) : (
@@ -546,7 +809,6 @@ export default function AppShell() {
         )}
       </div>
 
-      {/* MOBILE BOTTOM NAV */}
       {showMobileNav && (
         <nav className="mobile-bottom-nav">
           {NAV.map(({ id, icon, path }) => {
@@ -573,13 +835,36 @@ export default function AppShell() {
                 <span className="material-icons" style={{ fontSize: '24px' }}>
                   {icon}
                 </span>
+
+                {id === 'notifs' && notifUnread > 0 && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '18px',
+                      minWidth: '16px',
+                      height: '16px',
+                      borderRadius: '999px',
+                      background: 'var(--danger)',
+                      color: '#fff',
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      boxShadow: '0 0 0 2px var(--bg-primary)',
+                    }}
+                  >
+                    {notifUnread > 9 ? '9+' : notifUnread}
+                  </span>
+                )}
               </button>
             )
           })}
         </nav>
       )}
 
-      {/* NEW GROUP MODAL */}
       {showNewGroup && (
         <NewGroupModal
           user={user}
@@ -672,7 +957,6 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
         if (!isActive) e.currentTarget.style.background = 'transparent'
       }}
     >
-      {/* Avatar */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         {photo ? (
           <img
@@ -720,7 +1004,6 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
         )}
       </div>
 
-      {/* Info */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
