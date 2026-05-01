@@ -526,3 +526,4 @@ export async function getConversation(convId) {
   const snap = await getDoc(doc(db, 'conversations', convId))
   return snap.exists() ? { id: snap.id, ...snap.data() } : null
 }
+//lol
