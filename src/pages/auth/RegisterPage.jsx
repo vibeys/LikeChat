@@ -36,6 +36,7 @@ export default function RegisterPage() {
       toast.success('Account created! Check your email to verify.')
       navigate('/setup')
     } catch (err) {
+      console.error('Register error:', err)
       switch (err.code) {
         case 'auth/email-already-in-use':
           toast.error('This email is already registered. Try signing in instead.')
@@ -47,7 +48,7 @@ export default function RegisterPage() {
           toast.error('Password is too weak. Use at least 6 characters.')
           break
         default:
-          toast.error('Registration failed. Please try again.')
+          toast.error(err.message || 'Registration failed. Please try again.')
       }
     }
     setLoading(false)
@@ -57,12 +58,14 @@ export default function RegisterPage() {
     setGoogleLoading(true)
     try {
       await loginWithGoogle()
-      navigate('/setup')
+      // AuthContext will handle navigation based on setupComplete status via ProtectedRoute
+      navigate('/app/chats')
     } catch (err) {
+      console.error('Google sign in error:', err)
       if (err.code === 'auth/popup-closed-by-user') {
         // User closed popup — no toast needed
       } else {
-        toast.error('Google sign in failed. Please try again.')
+        toast.error(err.message || 'Google sign in failed. Please try again.')
       }
     }
     setGoogleLoading(false)
@@ -76,12 +79,8 @@ export default function RegisterPage() {
       >
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[var(--accent)] mb-4">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.37 5.06L2 22l4.94-1.37A9.96 9.96 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2z" fill="white"/>
-            </svg>
-          </div>
-          <h1 className="text-xl font-semibold text-[var(--text-1)]">LikeChat</h1>
+          <img src="/logo.png" alt="LikeChat" className="mx-auto mb-4" style={{ width: '120px', height: 'auto' }} />
+          <h1 className="text-2xl font-semibold text-[var(--text-1)]" style={{ fontFamily: '"Playfair Display", serif' }}>LikeChat</h1>
           <p className="text-sm text-[var(--text-3)] mt-1">Create your account</p>
         </div>
 

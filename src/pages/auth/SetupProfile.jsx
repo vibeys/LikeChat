@@ -63,12 +63,8 @@ export default function SetupProfile() {
            style={{ background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
 
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[var(--accent)] mb-4">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.37 5.06L2 22l4.94-1.37A9.96 9.96 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2z" fill="white"/>
-            </svg>
-          </div>
-          <h1 className="text-2xl font-semibold mb-1" style={{ color: 'var(--text-1)' }}>
+          <img src="/logo.png" alt="LikeChat" className="mx-auto mb-4" style={{ width: '120px', height: 'auto' }} />
+          <h1 className="text-2xl font-semibold mb-1" style={{ color: 'var(--text-1)', fontFamily: '"Playfair Display", serif' }}>
             Set up your profile
           </h1>
           <p className="text-sm" style={{ color: 'var(--text-2)' }}>

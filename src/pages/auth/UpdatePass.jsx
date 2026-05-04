@@ -32,6 +32,7 @@ export default function UpdatePass() {
       setDone(true)
       setTimeout(() => navigate('/login'), 2500)
     } catch (err) {
+      console.error('Password reset error:', err)
       if (err.code === 'auth/expired-action-code')
         toast.error('Reset link has expired. Please request a new one.')
       else if (err.code === 'auth/invalid-action-code')
@@ -51,6 +52,11 @@ export default function UpdatePass() {
 
         {!done ? (
           <>
+            {/* Logo */}
+            <div className="text-center mb-8">
+              <img src="/logo.png" alt="LikeChat" className="mx-auto" style={{ width: '100px', height: 'auto' }} />
+            </div>
+
             {/* Back */}
             <Link to="/login"
                   className="inline-flex items-center gap-1.5 text-sm mb-6 hover:underline"
@@ -62,7 +68,7 @@ export default function UpdatePass() {
             {/* Header */}
             <div className="mb-7">
               <h1 className="text-2xl font-semibold mb-1"
-                  style={{ color: 'var(--text-1)' }}>Set new password</h1>
+                  style={{ color: 'var(--text-1)', fontFamily: '"Playfair Display", serif' }}>Set new password</h1>
               <p className="text-sm" style={{ color: 'var(--text-2)' }}>
                 Choose a strong password for your account.
               </p>

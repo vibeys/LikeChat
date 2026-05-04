@@ -11,6 +11,7 @@ export function useAuth() { return useContext(AuthContext) }
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
 
   async function buildUser(firebaseUser) {
     try {
@@ -23,8 +24,9 @@ export function AuthProvider({ children }) {
         displayName:   firebaseUser.displayName,
         ...firestoreData,
       }
-    } catch {
+    } catch (err) {
       // Firestore unreadable (rules not published yet, etc.) — still let user in
+      console.warn('AuthContext buildUser error:', err)
       return {
         uid:           firebaseUser.uid,
         email:         firebaseUser.email,
@@ -37,23 +39,39 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let unsubNotif = () => {}
 
-    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Clean up previous notification listener before setting up a new one
-      unsubNotif()
+    const unsubAuth = onAuthStateChanged(
+      auth,
+      async (firebaseUser) => {
+        try {
+          // Clean up previous notification listener before setting up a new one
+          unsubNotif()
 
-      if (firebaseUser) {
-        const userData = await buildUser(firebaseUser)
-        setUser(userData)
-        goOnline(firebaseUser.uid)
+          if (firebaseUser) {
+            const userData = await buildUser(firebaseUser)
+            setUser(userData)
+            setError(null)
+            goOnline(firebaseUser.uid)
 
-        // Request FCM permission, save token, and wire up foreground toast listener
-        unsubNotif = initNotifications(firebaseUser.uid) ?? (() => {})
-      } else {
-        setUser(null)
+            // Request FCM permission, save token, and wire up foreground toast listener
+            unsubNotif = initNotifications(firebaseUser.uid) ?? (() => {})
+          } else {
+            setUser(null)
+            setError(null)
+          }
+
+          setLoading(false)
+        } catch (err) {
+          console.error('AuthContext onAuthStateChanged error:', err)
+          setError(err.message)
+          setLoading(false)
+        }
+      },
+      (err) => {
+        console.error('Auth state listener error:', err)
+        setError(err.message)
+        setLoading(false)
       }
-
-      setLoading(false)
-    })
+    )
 
     return () => {
       unsubAuth()
@@ -62,14 +80,20 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function refreshUser() {
-    const firebaseUser = auth.currentUser
-    if (!firebaseUser) return
-    const userData = await buildUser(firebaseUser)
-    setUser(userData)
+    try {
+      const firebaseUser = auth.currentUser
+      if (!firebaseUser) return
+      const userData = await buildUser(firebaseUser)
+      setUser(userData)
+      setError(null)
+    } catch (err) {
+      console.error('RefreshUser error:', err)
+      setError(err.message)
+    }
   }
 
   return (
-    <AuthContext.Provider value={{ user, setUser, refreshUser, loading }}>
+    <AuthContext.Provider value={{ user, setUser, refreshUser, loading, error }}>
       {!loading && children}
     </AuthContext.Provider>
   )

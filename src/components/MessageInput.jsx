@@ -108,6 +108,7 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       onCancelReply?.()
     } catch (err) {
       console.error('File upload error:', err)
+      // Silently fail — Firestore rules or quota exceeded
     } finally {
       setLoading(false)
       e.target.value = ''

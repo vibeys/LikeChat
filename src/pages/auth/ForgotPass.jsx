@@ -19,6 +19,7 @@ export default function ForgotPass() {
       await sendReset(email.trim())
       setSent(true)
     } catch (err) {
+      console.error('Send reset error:', err)
       toast.error(err.message || 'Failed to send reset email')
     } finally {
       setLoading(false)
@@ -41,10 +42,15 @@ export default function ForgotPass() {
 
         {!sent ? (
           <>
+            {/* Logo */}
+            <div className="text-center mb-8">
+              <img src="/logo.png" alt="LikeChat" className="mx-auto mb-4" style={{ width: '100px', height: 'auto' }} />
+            </div>
+
             {/* Header */}
             <div className="mb-7">
               <h1 className="text-2xl font-semibold mb-1"
-                  style={{ color: 'var(--text-1)' }}>Forgot password?</h1>
+                  style={{ color: 'var(--text-1)', fontFamily: '"Playfair Display", serif' }}>Forgot password?</h1>
               <p className="text-sm" style={{ color: 'var(--text-2)' }}>
                 Enter your email and we'll send you a reset link.
               </p>
