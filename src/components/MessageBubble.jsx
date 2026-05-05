@@ -154,10 +154,10 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
           onTouchEnd={handleLongPressEnd}
           onClick={() => !isDeleted && !isUnsent && setShowActions(s => !s)}
           className={[
-            'relative px-3 py-2 rounded-2xl cursor-pointer select-none transition-all duration-150',
+            'relative px-3 py-2 rounded-2xl cursor-pointer select-none transition-all duration-150 hover:shadow-md',
             isMine
-              ? 'bg-[var(--accent)] text-white rounded-br-sm'
-              : 'bg-[var(--bg-1)] text-[var(--text-1)] rounded-bl-sm shadow-sm',
+              ? 'bg-[var(--accent)] text-white rounded-br-sm hover:brightness-110'
+              : 'bg-[var(--bg-1)] text-[var(--text-1)] rounded-bl-sm shadow-sm hover:shadow-md',
             (isDeleted || isUnsent) ? 'opacity-60' : '',
           ].join(' ')}
         >
@@ -178,20 +178,21 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
 
         {/* Reactions */}
         {hasReactions && (
-          <div className="flex flex-wrap gap-1 mt-1">
+          <div className="flex flex-wrap gap-1 mt-2" style={{ animation: 'slideUp 0.2s ease-out' }}>
             {Object.entries(msg.reactions)
               .filter(([, uids]) => uids?.length > 0)
               .map(([emoji, uids]) => {
                 const reacted = uids.includes(currentUid)
                 return (
-                  <button key={emoji} onClick={() => handleReact(emoji)}
-                          className="flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs transition-all"
+                  <button key={emoji} 
+                          onClick={() => handleReact(emoji)}
+                          className="flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-medium transition-all hover:scale-110 active:scale-95"
                           style={{
                             background: reacted ? 'var(--accent-muted)' : 'var(--bg-2)',
-                            border: `1px solid ${reacted ? 'var(--accent)' : 'var(--border)'}`,
-                            animation: 'popIn 0.15s ease-out',
+                            border: `1.5px solid ${reacted ? 'var(--accent)' : 'var(--border)'}`,
+                            animation: 'popIn 0.2s ease-out',
                           }}>
-                    {emoji}
+                    <span>{emoji}</span>
                     <span style={{ color: reacted ? 'var(--accent)' : 'var(--text-2)' }}>
                       {uids.length}
                     </span>
@@ -211,48 +212,49 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
         {/* Action bar */}
         {showActions && !isDeleted && !isUnsent && (
           <div className={[
-            'absolute -top-12 flex items-center gap-1 bg-[var(--bg-1)] border border-[var(--border)] rounded-2xl shadow-lg px-2 py-1.5 z-10',
+            'absolute -top-12 flex items-center gap-1 bg-[var(--bg-1)] border border-[var(--border)] rounded-2xl shadow-lg px-2 py-1.5 z-10 backdrop-blur-sm',
             isMine ? 'right-0' : 'left-0'
           ].join(' ')}
-               style={{ animation: 'popIn 0.15s ease-out' }}>
+               style={{ animation: 'popIn 0.2s ease-out' }}>
             {showEmojis ? (
               QUICK_EMOJIS.map(e => (
-                <button key={e} onClick={() => handleReact(e)}
-                        className="hover:scale-125 transition-transform text-base p-0.5">
+                <button key={e} 
+                        onClick={() => handleReact(e)}
+                        className="hover:scale-125 transition-transform duration-150 text-lg p-1 active:scale-95 rounded-lg hover:bg-[var(--bg-2)]">
                   {e}
                 </button>
               ))
             ) : (
               <>
                 <button onClick={() => setShowEmojis(true)} title="React"
-                        className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-colors"
+                        className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95"
                         style={{ color: 'var(--text-2)' }}>
-                  <Smile size={15} />
+                  <Smile size={16} />
                 </button>
                 <button onClick={() => { onReply(msg); setShowActions(false) }} title="Reply"
-                        className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-colors"
+                        className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95"
                         style={{ color: 'var(--text-2)' }}>
-                  <Reply size={15} />
+                  <Reply size={16} />
                 </button>
                 {isMine && (
                   <>
                     <button onClick={handleUnsent} title="Unsend for everyone"
-                            className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-colors text-xs font-medium"
+                            className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95 text-xs font-medium"
                             style={{ color: 'var(--danger)' }}>
                       Unsend
                     </button>
                     <button onClick={handleDeleteForMe} title="Delete for me"
-                            className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-colors"
+                            className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95"
                             style={{ color: 'var(--text-3)' }}>
-                      <Trash2 size={15} />
+                      <Trash2 size={16} />
                     </button>
                   </>
                 )}
                 {!isMine && (
                   <button onClick={handleDeleteForMe} title="Delete for me"
-                          className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-colors"
+                          className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95"
                           style={{ color: 'var(--text-3)' }}>
-                    <Trash2 size={15} />
+                    <Trash2 size={16} />
                   </button>
                 )}
               </>

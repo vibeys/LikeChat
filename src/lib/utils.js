@@ -38,3 +38,13 @@ export function debounce(fn, ms) {
     t = setTimeout(() => fn(...args), ms)
   }
 }
+
+export function formatUserName(name, isDeleted = false) {
+  if (!name || isDeleted) return '[Deleted Account]'
+  return name.trim() || '[Deleted Account]'
+}
+
+export function safeUserDisplayName(user, isDeleted = false) {
+  if (isDeleted) return '[Deleted Account]'
+  return user?.displayName || user?.username || '[Deleted Account]'
+}

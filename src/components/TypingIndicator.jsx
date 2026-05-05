@@ -30,20 +30,19 @@ export default function TypingIndicator({ names, convId, currentUid }) {
       : 'Several people are typing'
 
   return (
-    <div className="flex items-center gap-2 px-4 py-1">
-      <div className="flex items-center gap-1 px-3 py-2 rounded-2xl rounded-bl-sm shadow-sm"
-           style={{ background: 'var(--bg-1)' }}>
+    <div className="flex items-center gap-2 px-4 py-2" style={{ animation: 'slideUp 0.2s ease-out' }}>
+      <div className="flex items-center gap-1 px-3 py-2.5 rounded-full shadow-sm"
+           style={{ background: 'var(--bg-secondary)', animation: 'typingAppear 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
         {[0, 1, 2].map(i => (
           <span key={i}
-                className="w-1.5 h-1.5 rounded-full"
+                className="w-2 h-2 rounded-full inline-block"
                 style={{
-                  background: 'var(--text-3)',
-                  animation: 'typingBounce 1.2s ease-in-out infinite',
-                  animationDelay: `${i * 0.2}s`,
+                  background: 'var(--text-secondary)',
+                  animation: `typingBounce 0.8s cubic-bezier(0.65, 0, 0.35, 1) ${i * 0.15}s infinite`,
                 }} />
         ))}
       </div>
-      <span className="text-xs" style={{ color: 'var(--text-3)' }}>{label}</span>
+      <span className="text-xs font-medium" style={{ color: 'var(--text-3)', animation: 'fadeIn 0.3s ease-out' }}>{label}</span>
     </div>
   )
 }

@@ -26,6 +26,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
+import { deleteAllNotifications } from './notificationService'
 
 // ── REGISTER ─────────────────────────────────────────────
 export async function register({ displayName, email, password }) {
@@ -173,13 +174,7 @@ export async function deleteAccount() {
 
   // ── 3. Delete all notifications received by this user ───────
   try {
-    const notifsSnap = await getDocs(collection(db, 'notifications', uid, 'items'))
-    const CHUNK = 450
-    for (let i = 0; i < notifsSnap.docs.length; i += CHUNK) {
-      const batch = writeBatch(db)
-      notifsSnap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref))
-      await batch.commit()
-    }
+    await deleteAllNotifications(uid)
   } catch (err) {
     console.warn('deleteAccount: could not clean received notifications', err)
   }

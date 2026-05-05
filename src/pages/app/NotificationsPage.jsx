@@ -9,10 +9,11 @@ import {
   query,
   updateDoc,
   writeBatch,
+  getDoc,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import { acceptGroupInvite } from '../../services/chatService'
-import { formatDate, formatTime, getAvatarColor, getInitials } from '../../lib/utils'
+import { formatDate, formatTime, getAvatarColor, getInitials, safeUserDisplayName } from '../../lib/utils'
 import { Spinner } from '../../components/UI'
 import {
   ArrowLeft,
@@ -51,6 +52,7 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [notifs, setNotifs] = useState([])
+  const [deletingId, setDeletingId] = useState(null)
 
   useEffect(() => {
     if (!user?.uid) return
@@ -121,9 +123,14 @@ export default function NotificationsPage() {
   }
 
   async function deleteNotif(notifId) {
+    setDeletingId(notifId)
+    await new Promise(r => setTimeout(r, 200))
     try {
       await deleteDoc(doc(db, 'notifications', user.uid, 'items', notifId))
-    } catch {
+      setDeletingId(null)
+    } catch (err) {
+      console.error('Failed to delete notification:', err)
+      setDeletingId(null)
       toast.error('Failed to delete notification')
     }
   }
@@ -133,13 +140,16 @@ export default function NotificationsPage() {
 
     if (!notif.read) await markRead(notif.id)
 
-    if (notif.type === 'message' || notif.type === 'media' || notif.type === 'reaction') {
+    // Message, media, reaction notifications
+    if (['message', 'media', 'reaction'].includes(notif.type)) {
       if (notif.convId) navigate(`/app/chats/${notif.convId}`)
       return
     }
 
+    // Friend request
     if (notif.type === 'friend_request') {
       navigate('/app/friends')
+      return
     }
   }
 
@@ -164,11 +174,11 @@ export default function NotificationsPage() {
       </div>
 
       <div style={styles.tabs}>
-        <TabButton active={filter === 'all'} onClick={() => setFilter('all')}>
-          All
-        </TabButton>
         <TabButton active={filter === 'unread'} onClick={() => setFilter('unread')}>
           Unread {unreadCount > 0 ? `(${unreadCount})` : ''}
+        </TabButton>
+        <TabButton active={filter === 'all'} onClick={() => setFilter('all')}>
+          All
         </TabButton>
       </div>
 
@@ -199,6 +209,7 @@ export default function NotificationsPage() {
                     onOpen={() => openNotif(notif)}
                     onMarkRead={() => markRead(notif.id)}
                     onDelete={() => deleteNotif(notif.id)}
+                    isDeleting={deletingId === notif.id}
                     style={{ animationDelay: `${idx * 0.04}s` }}
                   />
                 ))}
@@ -211,44 +222,48 @@ export default function NotificationsPage() {
   )
 }
 
-function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
+function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, style }) {
   const navigate = useNavigate()
   const [accepting, setAccepting] = useState(false)
+  const [senderExists, setSenderExists] = useState(true)
 
-  const name = notif.fromName || 'Someone'
-  const ac = getAvatarColor(name)
+  // Check if sender account still exists
+  useEffect(() => {
+    if (!notif.fromUid) {
+      setSenderExists(false)
+      return
+    }
+    getDoc(doc(db, 'users', notif.fromUid))
+      .then(snap => setSenderExists(snap.exists()))
+      .catch(() => setSenderExists(false))
+  }, [notif.fromUid])
+
+  const name = safeUserDisplayName({ displayName: notif.fromName }, !senderExists)
+  const ac = getAvatarColor(notif.fromName || 'unknown')
 
   function getIcon() {
     switch (notif.type) {
-      case 'message':
-        return <MessageCircle size={14} />
-      case 'media':
-        return <Image size={14} />
-      case 'reaction':
-        return <Heart size={14} />
-      case 'friend_request':
-        return <UserPlus size={14} />
-      case 'group_invite':
-        return <Users size={14} />
-      default:
-        return <Bell size={14} />
+      case 'message':        return <MessageCircle size={14} />
+      case 'media':          return <Image size={14} />
+      case 'reaction':       return <Heart size={14} />
+      case 'friend_request': return <UserPlus size={14} />
+      case 'group_invite':   return <Users size={14} />
+      case 'announce':       return <Bell size={14} />
+      case 'mention':        return <Users size={14} />
+      default:               return <Bell size={14} />
     }
   }
 
   function getTitle() {
     switch (notif.type) {
-      case 'message':
-        return `${name} sent you a message`
-      case 'media':
-        return `${name} sent media`
-      case 'reaction':
-        return `${name} reacted to your message`
-      case 'friend_request':
-        return `${name} sent you a friend request`
-      case 'group_invite':
-        return `${name} invited you to a group`
-      default:
-        return notif.title || 'Notification'
+      case 'message':        return `${name} sent you a message`
+      case 'media':          return `${name} sent media`
+      case 'reaction':       return `${name} reacted to your message`
+      case 'friend_request': return `${name} sent you a friend request`
+      case 'group_invite':   return `${name} invited you to a group`
+      case 'announce':       return `📢 Announcement in ${notif.groupName || 'a group'}`
+      case 'mention':        return `${name} mentioned you`
+      default:               return notif.title || 'New notification'
     }
   }
 
@@ -280,9 +295,9 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
     }
   }
 
-  function handleLater(e) {
+  async function handleDismissInvite(e) {
     e.stopPropagation()
-    toast.success('Invite kept unread')
+    await onDelete()
   }
 
   return (
@@ -292,9 +307,7 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
       }}
       style={{
         ...styles.item,
-        opacity: notif.read ? 0.95 : 1,
-        borderColor: notif.read ? 'var(--border)' : 'rgba(59,130,246,0.28)',
-        background: notif.read ? 'var(--bg-primary)' : 'var(--bg-secondary)',
+        animation: isDeleting ? 'slideOutRight 0.2s ease-in forwards' : 'popIn 0.3s ease-out',
         ...style,
       }}
     >
@@ -327,16 +340,16 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, style }) {
               onClick={handleJoinInvite}
               disabled={accepting}
               style={{ ...styles.actionBtn, ...styles.acceptBtn }}
-              title="Join invite"
+              title="Join group"
             >
               {accepting ? <Spinner size={12} /> : <Check size={14} />}
             </button>
             <button
-              onClick={handleLater}
+              onClick={handleDismissInvite}
               style={{ ...styles.actionBtn, ...styles.declineBtn }}
-              title="Keep it unread"
+              title="Delete invite"
             >
-              <X size={14} />
+              <Trash2 size={14} />
             </button>
           </>
         ) : (
@@ -469,7 +482,7 @@ const styles = {
     overflowX: 'auto',
   },
   tabBtn: {
-    border: '1px solid',
+    border: '1px solid var(--border)',
     borderRadius: '999px',
     padding: '8px 14px',
     fontSize: '13px',
@@ -477,6 +490,8 @@ const styles = {
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     transition: 'all 0.15s ease',
+    background: 'transparent',
+    color: 'var(--text-tertiary)',
   },
   content: {
     flex: 1,
@@ -505,10 +520,10 @@ const styles = {
     gap: '12px',
     padding: '12px',
     borderRadius: '16px',
-    border: '1px solid',
+    border: '1px solid var(--border)',
     background: 'var(--bg-primary)',
     cursor: 'pointer',
-    transition: 'background 0.15s ease, border-color 0.15s ease, transform 0.15s ease',
+    transition: 'all 0.15s ease',
   },
   avatarWrap: {
     flexShrink: 0,

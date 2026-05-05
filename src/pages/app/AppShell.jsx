@@ -462,15 +462,15 @@ export default function AppShell() {
             width: '40px',
             height: '40px',
             borderRadius: '12px',
-            background: 'var(--primary)',
+            background: 'transparent',
             border: 'none',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             marginBottom: '12px',
-            color: '#fff',
             transition: 'transform 0.2s',
+            padding: '4px',
           }}
           onMouseEnter={e => {
             e.currentTarget.style.transform = 'scale(1.08) rotate(-4deg)'
@@ -479,9 +479,7 @@ export default function AppShell() {
             e.currentTarget.style.transform = 'scale(1)'
           }}
         >
-          <span className="material-icons" style={{ fontSize: '20px' }}>
-            chat_bubble
-          </span>
+          <img src="/logo.png" alt="LikeChat" style={{ width: '32px', height: 'auto' }} />
         </button>
 
         {NAV.map(({ id, icon, label, path }) => {

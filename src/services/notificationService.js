@@ -5,6 +5,8 @@ import {
   deleteDoc,
   collection,
   serverTimestamp,
+  getDocs,
+  writeBatch,
 } from 'firebase/firestore'
 import { messaging, db } from '../lib/firebase'
 import toast from 'react-hot-toast'
@@ -88,11 +90,15 @@ export async function sendNotification(toUid, {
 }) {
   if (!toUid) return null
 
+  // Validate notification type
+const validTypes = ['message', 'media', 'reaction', 'friend_request', 'group_invite', 'announce', 'mention']
+  const safeType = validTypes.includes(type) ? type : 'message'
+
   try {
     const notifRef = doc(collection(db, 'notifications', toUid, 'items'))
 
     await setDoc(notifRef, {
-      type:      safeText(type, 'message'),
+      type:      safeType,
       title:     safeText(title, 'Notification'),
       text:      safeText(body, ''),
       fromUid:   safeText(fromUid, ''),
@@ -114,7 +120,7 @@ export async function sendNotification(toUid, {
     if (err?.code === 'permission-denied') {
       console.warn('sendNotification: permission denied for uid', toUid)
     } else {
-      console.warn('sendNotification failed:', err?.message || err)
+      console.error('sendNotification failed:', err?.message || err)
     }
     return null
   }
@@ -122,10 +128,27 @@ export async function sendNotification(toUid, {
 
 // ── Delete a notification ─────────────────────────────────
 export async function deleteNotification(toUid, notifId) {
+  if (!toUid || !notifId) return
   try {
     await deleteDoc(doc(db, 'notifications', toUid, 'items', notifId))
   } catch (err) {
-    console.warn('Failed to delete notification:', err?.message || err)
+    if (err?.code !== 'not-found') {
+      console.warn('Failed to delete notification:', err?.message || err)
+    }
+  }
+}
+
+// ── Delete all notifications for a user ──────────────────
+export async function deleteAllNotifications(uid) {
+  if (!uid) return
+  try {
+    const itemsSnap = await collection(db, 'notifications', uid, 'items')
+    const docs = await getDocs(itemsSnap)
+    const batch = writeBatch(db)
+    docs.docs.forEach(d => batch.delete(d.ref))
+    if (docs.docs.length > 0) await batch.commit()
+  } catch (err) {
+    console.warn('Failed to delete all notifications:', err?.message || err)
   }
 }
 

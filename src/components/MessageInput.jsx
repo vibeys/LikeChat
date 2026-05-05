@@ -1,6 +1,6 @@
 // src/components/MessageInput.jsx
 import { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, Smile, X, Image, Video, File } from 'lucide-react'
+import { Send, Paperclip, Smile, X, Image, Video, File, Megaphone, AtSign } from 'lucide-react'
 import { setTyping } from '../lib/typing'
 import { sendMessage, uploadFile } from '../services/chatService'
 import { debounce } from '../lib/utils'
@@ -18,6 +18,8 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
   const [loading, setLoading]       = useState(false)
   const [showEmoji, setShowEmoji]   = useState(false)
   const [showAttach, setShowAttach] = useState(false)
+  const [showMenu, setShowMenu]     = useState(false)
+  const [isAnnounce, setIsAnnounce] = useState(false)
   const textareaRef = useRef(null)
   const imageRef    = useRef(null)
   const videoRef    = useRef(null)
@@ -128,14 +130,14 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       {/* Reply preview */}
       {replyTo && (
         <div className="flex items-center justify-between rounded-xl px-3 py-2 mb-2 border-l-2"
-             style={{ background: 'var(--accent-muted)', borderColor: 'var(--accent)' }}>
+             style={{ background: 'var(--accent-muted)', borderColor: 'var(--accent)', animation: 'slideDown 0.2s ease-out' }}>
           <div className="min-w-0">
             <p className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Replying</p>
             <p className="text-xs truncate max-w-[260px]" style={{ color: 'var(--text-2)' }}>
               {replyTo.text || '📎 Attachment'}
             </p>
           </div>
-          <button onClick={onCancelReply} style={{ color: 'var(--text-3)' }}>
+          <button onClick={onCancelReply} className="hover:scale-110 transition-transform" style={{ color: 'var(--text-3)' }}>
             <X size={14} />
           </button>
         </div>
@@ -145,13 +147,14 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       {showEmoji && (
         <div data-picker
              className="absolute bottom-16 left-2 z-30 rounded-2xl shadow-xl p-3"
-             style={{ background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
+             style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', animation: 'slideUp 0.2s ease-out' }}>
           {EMOJI_ROWS.map((row, i) => (
             <div key={i} className="flex gap-1 mb-1">
-              {row.map(emoji => (
-                <button key={emoji} onClick={() => insertEmoji(emoji)}
-                        className="text-xl w-9 h-9 flex items-center justify-center rounded-lg hover:scale-125 transition-transform"
-                        style={{ background: 'transparent' }}
+              {row.map((emoji, idx) => (
+                <button key={emoji} 
+                        onClick={() => insertEmoji(emoji)}
+                        className="text-xl w-9 h-9 flex items-center justify-center rounded-lg hover:scale-125 transition-all duration-150 active:scale-95"
+                        style={{ background: 'transparent', animation: `popIn 0.15s ease-out ${idx * 0.02}s backwards` }}
                         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-2)'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                   {emoji}
@@ -166,7 +169,7 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       {showAttach && (
         <div data-picker
              className="absolute bottom-16 left-12 z-30 rounded-2xl shadow-lg p-2 flex flex-col gap-1"
-             style={{ background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
+             style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', animation: 'slideUp 0.2s ease-out' }}>
           <AttachBtn icon={Image} label="Photo / Image"
                      onClick={() => { imageRef.current?.click(); setShowAttach(false) }} />
           <AttachBtn icon={Video} label="Video"
@@ -188,15 +191,15 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       <div className="flex items-end gap-2">
         <button data-picker
                 onClick={() => { setShowEmoji(s => !s); setShowAttach(false) }}
-                className="p-2 transition-colors shrink-0"
-                style={{ color: showEmoji ? 'var(--accent)' : 'var(--text-3)' }}>
+                className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
+                style={{ color: showEmoji ? 'var(--accent)' : 'var(--text-3)', background: showEmoji ? 'var(--bg-2)' : 'transparent' }}>
           <Smile size={20} />
         </button>
 
         <button data-picker
                 onClick={() => { setShowAttach(s => !s); setShowEmoji(false) }}
-                className="p-2 transition-colors shrink-0"
-                style={{ color: showAttach ? 'var(--accent)' : 'var(--text-3)' }}>
+                className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
+                style={{ color: showAttach ? 'var(--accent)' : 'var(--text-3)', background: showAttach ? 'var(--bg-2)' : 'transparent' }}>
           <Paperclip size={20} />
         </button>
 
@@ -207,7 +210,7 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
           onKeyDown={handleKeyDown}
           placeholder="Message"
           rows={1}
-          className="flex-1 resize-none rounded-2xl px-4 py-2.5 text-sm outline-none transition-colors"
+          className="flex-1 resize-none rounded-2xl px-4 py-2.5 text-sm outline-none transition-all duration-150 focus:shadow-md"
           style={{
             background: 'var(--bg-2)',
             color:      'var(--text-1)',
@@ -219,7 +222,7 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
 
         <button onClick={handleSend}
                 disabled={loading || !text.trim()}
-                className="p-2.5 text-white rounded-full transition-all shrink-0"
+                className="p-2.5 text-white rounded-full transition-all duration-150 shrink-0 hover:scale-110 active:scale-95"
                 style={{
                   background: 'var(--accent)',
                   opacity: loading || !text.trim() ? 0.4 : 1,
@@ -235,12 +238,12 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
 function AttachBtn({ icon: Icon, label, onClick }) {
   return (
     <button onClick={onClick}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors text-left"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-all duration-150 text-left hover:scale-105 active:scale-95"
             style={{ color: 'var(--text-1)' }}
             onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-2)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-      <Icon size={15} style={{ color: 'var(--accent)' }} />
-      {label}
+      <Icon size={16} style={{ color: 'var(--accent)' }} />
+      <span className="font-medium">{label}</span>
     </button>
   )
 }

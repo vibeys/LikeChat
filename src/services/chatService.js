@@ -122,18 +122,54 @@ export async function inviteGroupMembers(convId, inviterUid, memberUids, names =
     memberPhotos: { ...(convData.memberPhotos || {}), ...photos },
   })
 
-  cleanedUids.forEach(uid => {
-    sendNotification(uid, {
-      type: 'group_invite',
-      title: `${inviterName} invited you to a group`,
-      body: `Join "${convData.groupName || 'this group'}"`,
-      fromUid: inviterUid,
-      fromName: inviterName,
-      fromPhoto: inviterPhoto,
-      convId,
-      groupName: convData.groupName || '',
-    }).catch(console.error)
-  })
+  // Check for existing invites and deduplicate
+  for (const uid of cleanedUids) {
+    try {
+      const notifsSnap = await getDocs(
+        query(
+          collection(db, 'notifications', uid, 'items'),
+          where('type', '==', 'group_invite'),
+          where('fromUid', '==', inviterUid),
+          where('convId', '==', convId)
+        )
+      )
+
+      if (notifsSnap.docs.length > 0) {
+        // Existing invite found - update timestamp to remind
+        const existingId = notifsSnap.docs[0].id
+        await updateDoc(doc(db, 'notifications', uid, 'items', existingId), {
+          createdAt: serverTimestamp(),
+          createdAtMs: Date.now(),
+          reminded: true,
+        }).catch(() => {})
+      } else {
+        // No existing invite - create new notification
+        await sendNotification(uid, {
+          type: 'group_invite',
+          title: `${inviterName} invited you to a group`,
+          body: `Join "${convData.groupName || 'this group'}"`,
+          fromUid: inviterUid,
+          fromName: inviterName,
+          fromPhoto: inviterPhoto,
+          convId,
+          groupName: convData.groupName || '',
+        }).catch(console.error)
+      }
+    } catch (err) {
+      console.error(`Failed to handle group invite for ${uid}:`, err)
+      // Still send notification as fallback
+      await sendNotification(uid, {
+        type: 'group_invite',
+        title: `${inviterName} invited you to a group`,
+        body: `Join "${convData.groupName || 'this group'}"`,
+        fromUid: inviterUid,
+        fromName: inviterName,
+        fromPhoto: inviterPhoto,
+        convId,
+        groupName: convData.groupName || '',
+      }).catch(console.error)
+    }
+  }
 }
 
 // ── Internal helpers ───────────────────────────────────────

@@ -10,13 +10,13 @@ export function Button({
   className = '',
   ...props
 }) {
-  const base = 'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed'
+  const base = 'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95'
 
   const variants = {
-    primary:  'bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white',
+    primary:  'bg-[var(--accent)] hover:bg-[var(--accent-hover)] hover:shadow-lg text-white',
     secondary:'bg-[var(--bg-2)] hover:bg-[var(--bg-3)] text-[var(--text-1)]',
-    ghost:    'hover:bg-[var(--bg-2)] text-[var(--text-2)]',
-    danger:   'bg-[var(--danger)] hover:opacity-90 text-white',
+    ghost:    'hover:bg-[var(--bg-2)] text-[var(--text-2)] hover:text-[var(--text-1)]',
+    danger:   'bg-[var(--danger)] hover:opacity-90 text-white hover:shadow-lg',
   }
 
   const sizes = {
@@ -57,21 +57,21 @@ export function Input({
       <div className="relative">
         <input
           type={isPassword ? (show ? 'text' : 'password') : type}
-          className={`w-full px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-1)] text-[var(--text-1)] text-sm placeholder:text-[var(--text-4)] focus:outline-none focus:border-[var(--accent)] transition-colors ${isPassword ? 'pr-10' : ''} ${className}`}
+          className={`w-full px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-1)] text-[var(--text-1)] text-sm placeholder:text-[var(--text-4)] focus:outline-none focus:border-[var(--accent)] focus:shadow-lg transition-all duration-200 ${isPassword ? 'pr-10' : ''} ${className}`}
           {...props}
         />
         {isPassword && (
           <button
             type="button"
             onClick={() => setShow(s => !s)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)] transition-colors duration-150"
           >
-            {show ? <EyeOff size={15} /> : <Eye size={15} />}
+            {show ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         )}
       </div>
       {error && (
-        <p className="text-xs text-[var(--danger)]">{error}</p>
+        <p className="text-xs text-[var(--danger)] animate-pulse">{error}</p>
       )}
     </div>
   )
@@ -81,20 +81,22 @@ export function Modal({ open, onClose, title, children }) {
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
       onClick={onClose}
+      style={{ animation: 'fadeIn 0.2s ease-out' }}
     >
       <div
         className="bg-[var(--bg-1)] rounded-2xl shadow-lg w-full max-w-md mx-4 p-5"
         onClick={e => e.stopPropagation()}
+        style={{ animation: 'popIn 0.3s ease-out' }}
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-medium text-[var(--text-1)] text-base">{title}</h2>
+          <h2 className="font-semibold text-[var(--text-1)] text-base">{title}</h2>
           <button
             onClick={onClose}
-            className="text-[var(--text-3)] hover:text-[var(--text-1)] transition-colors"
+            className="text-[var(--text-3)] hover:text-[var(--text-1)] transition-all duration-150 hover:scale-110 active:scale-95"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
         {children}
@@ -117,16 +119,16 @@ export function Avatar({ user, size = 40, showStatus = false }) {
   const { bg, text } = getAvatarColor(name)
 
   return (
-    <div className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
+    <div className="relative inline-flex shrink-0 transition-transform duration-200 hover:scale-105" style={{ width: size, height: size }}>
       {user?.photoURL ? (
         <img
           src={user.photoURL}
           alt={name}
-          className="rounded-full object-cover w-full h-full"
+          className="rounded-full object-cover w-full h-full shadow-sm"
         />
       ) : (
         <div
-          className="rounded-full flex items-center justify-center font-medium"
+          className="rounded-full flex items-center justify-center font-medium shadow-sm"
           style={{
             width: size,
             height: size,
@@ -140,7 +142,7 @@ export function Avatar({ user, size = 40, showStatus = false }) {
       )}
       {showStatus && user?.status && (
         <span
-          className="absolute bottom-0 right-0 rounded-full border-2 border-[var(--bg-1)]"
+          className="absolute bottom-0 right-0 rounded-full border-2 border-[var(--bg-1)] animate-pulse"
           style={{
             width: size * 0.28,
             height: size * 0.28,
