@@ -378,6 +378,75 @@ export async function uploadFile(file, convId) {
   return { url, name: file.name, size: file.size }
 }
 
+// ── Send announcement + notify all members ───────────────
+export async function sendAnnouncement(convId, senderUid, text, convData) {
+  if (!convData || convData.type !== 'group') {
+    throw new Error('Announcements only work in groups')
+  }
+
+  const msgRef = doc(collection(db, 'conversations', convId, 'messages'))
+  await setDoc(msgRef, {
+    id: msgRef.id,
+    convId,
+    senderId: senderUid,
+    text,
+    type: 'announce',
+    fileURL: null,
+    fileName: null,
+    fileType: null,
+    reactions: {},
+    replyTo: null,
+    deliveredTo: [senderUid],
+    readBy: [senderUid],
+    unsent: false,
+    deletedFor: [],
+    createdAt: serverTimestamp(),
+    createdAtMs: Date.now(),
+  })
+
+  // Notify all members except sender
+  const senderName = convData.memberNames?.[senderUid] || 'Someone'
+  const senderPhoto = convData.memberPhotos?.[senderUid] || ''
+  const members = convData.members || []
+  const pending = convData.pendingMembers || []
+  const allMembers = [...new Set([...members, ...pending])].filter(uid => uid !== senderUid)
+
+  for (const uid of allMembers) {
+    await sendNotification(uid, {
+      type: 'announce',
+      title: `🔔 Announcement in ${convData.groupName || 'a group'}`,
+      body: text.slice(0, 60),
+      fromUid: senderUid,
+      fromName: senderName,
+      fromPhoto: senderPhoto,
+      convId,
+      groupName: convData.groupName || '',
+    }).catch(console.error)
+  }
+
+  return msgRef.id
+}
+
+// ── Send mention notification ────────────────────────────
+export async function sendMentionNotif(convId, senderUid, mentionedUid, text, convData) {
+  if (mentionedUid === senderUid) return // Don't notify self
+
+  const senderName = convData?.memberNames?.[senderUid] || 'Someone'
+  const senderPhoto = convData?.memberPhotos?.[senderUid] || ''
+  const isGroup = convData?.type === 'group'
+
+  await sendNotification(mentionedUid, {
+    type: 'mention',
+    title: senderName + ' mentioned you',
+    body: text.slice(0, 60),
+    fromUid: senderUid,
+    fromName: senderName,
+    fromPhoto: senderPhoto,
+    convId,
+    groupName: isGroup ? convData.groupName : null,
+  }).catch(console.error)
+}
+
 // ── Mark DELIVERED ────────────────────────────────────────
 export async function markDelivered(convId, uid, messages) {
   const undelivered = messages.filter(

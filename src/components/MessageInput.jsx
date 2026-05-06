@@ -32,16 +32,17 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
 
   // Close pickers on outside click
   useEffect(() => {
-    if (!showEmoji && !showAttach) return
+    if (!showEmoji && !showAttach && !showMenu) return
     const handler = (e) => {
       if (!e.target.closest('[data-picker]')) {
         setShowEmoji(false)
         setShowAttach(false)
+        setShowMenu(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji, showAttach])
+  }, [showEmoji, showAttach, showMenu])
 
   const handleInput = (e) => {
     setText(e.target.value)
@@ -71,16 +72,17 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
       await sendMessage(convId, {
         senderId: currentUser.uid,
         text:     toSend,
-        type:     'text',
+        type:     isAnnounce ? 'announce' : 'text',
         replyTo:  replyTo
           ? { msgId: replyTo.id, text: replyTo.text, senderId: replyTo.senderId }
           : null,
       })
       onCancelReply?.()
+      setIsAnnounce(false)
       setTyping(convId, currentUser.uid, false)
     } catch (err) {
       console.error('Send error:', err)
-      setText(toSend) // restore on failure
+      setText(toSend)
     } finally {
       setLoading(false)
     }
@@ -179,6 +181,18 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
         </div>
       )}
 
+      {/* Announcement/Mention menu */}
+      {showMenu && (
+        <div data-picker
+             className="absolute bottom-16 left-20 z-30 rounded-2xl shadow-lg p-2 flex flex-col gap-1"
+             style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', animation: 'slideUp 0.2s ease-out' }}>
+          <AttachBtn icon={Megaphone} label={isAnnounce ? '✓ Announce' : 'Announce'}
+                     onClick={() => { setIsAnnounce(!isAnnounce); setShowMenu(false) }} />
+          <AttachBtn icon={AtSign} label="@Mention" 
+                     onClick={() => { setText(text + '@'); setShowMenu(false) }} />
+        </div>
+      )}
+
       {/* Hidden inputs */}
       <input ref={imageRef} type="file" accept="image/*" className="hidden"
              onChange={e => handleFileUpload(e, 'image')} />
@@ -203,6 +217,13 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
           <Paperclip size={20} />
         </button>
 
+        <button data-picker
+                onClick={() => { setShowMenu(s => !s); setShowEmoji(false); setShowAttach(false) }}
+                className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
+                style={{ color: showMenu ? 'var(--accent)' : 'var(--text-3)', background: showMenu ? 'var(--bg-2)' : 'transparent' }}>
+          <Megaphone size={20} />
+        </button>
+
         <textarea
           ref={textareaRef}
           value={text}
@@ -224,7 +245,7 @@ export default function MessageInput({ convId, currentUser, replyTo, onCancelRep
                 disabled={loading || !text.trim()}
                 className="p-2.5 text-white rounded-full transition-all duration-150 shrink-0 hover:scale-110 active:scale-95"
                 style={{
-                  background: 'var(--accent)',
+                  background: isAnnounce ? 'var(--primary)' : 'var(--accent)',
                   opacity: loading || !text.trim() ? 0.4 : 1,
                   cursor:  loading || !text.trim() ? 'not-allowed' : 'pointer',
                 }}>
