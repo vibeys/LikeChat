@@ -25,7 +25,7 @@ import {
   cancelAllConvNotifs,
 } from './notificationService'
 
-// ── Create or get private conversation ───────────────────
+// ── Create or get private conversation ───────────────────────────────────────
 export async function createPrivateConv(uid1, uid2, names = {}, photos = {}) {
   const sorted = [uid1, uid2].sort()
   const convId = `private_${sorted[0]}_${sorted[1]}`
@@ -45,6 +45,7 @@ export async function createPrivateConv(uid1, uid2, names = {}, photos = {}) {
       createdAt: serverTimestamp(),
       pinnedBy: [],
       mutedBy: [],
+      pendingMembers: [],
       lastMessage: { text: '', senderId: '', timestamp: null, type: 'text' },
       unreadCount: { [uid1]: 0, [uid2]: 0 },
     },
@@ -54,8 +55,8 @@ export async function createPrivateConv(uid1, uid2, names = {}, photos = {}) {
   return convId
 }
 
-// ── Create group conversation ─────────────────────────────
-// Members are NOT auto-added — they get an invite notification first
+// ── Create group conversation ─────────────────────────────────────────────────
+// Creator is the only immediate member — others get an invite notification.
 export async function createGroupConv(creatorUid, groupName, memberUids, names = {}, photos = {}) {
   const convRef = doc(collection(db, 'conversations'))
 
@@ -76,18 +77,18 @@ export async function createGroupConv(creatorUid, groupName, memberUids, names =
     unreadCount: { [creatorUid]: 0 },
   })
 
-  const creatorName = names[creatorUid] || 'Someone'
+  const creatorName  = names[creatorUid]  || 'Someone'
   const creatorPhoto = photos[creatorUid] || ''
 
   memberUids.forEach(uid => {
     sendNotification(uid, {
-      type: 'group_invite',
-      title: `${creatorName} invited you to a group`,
-      body: `Join "${groupName}"`,
-      fromUid: creatorUid,
-      fromName: creatorName,
+      type:      'group_invite',
+      title:     `${creatorName} invited you to a group`,
+      body:      `Join "${groupName}"`,
+      fromUid:   creatorUid,
+      fromName:  creatorName,
       fromPhoto: creatorPhoto,
-      convId: convRef.id,
+      convId:    convRef.id,
       groupName,
     }).catch(console.error)
   })
@@ -95,16 +96,16 @@ export async function createGroupConv(creatorUid, groupName, memberUids, names =
   return convRef.id
 }
 
-// ── Invite more members to an existing group ──────────────
+// ── Invite more members to an existing group ──────────────────────────────────
 export async function inviteGroupMembers(convId, inviterUid, memberUids, names = {}, photos = {}) {
-  const convRef = doc(db, 'conversations', convId)
+  const convRef  = doc(db, 'conversations', convId)
   const convSnap = await getDoc(convRef)
   const convData = convSnap.data()
 
-  if (!convData) throw new Error('Group not found')
+  if (!convData)              throw new Error('Group not found')
   if (convData.type !== 'group') throw new Error('Not a group chat')
 
-  const currentMembers = convData.members || []
+  const currentMembers = convData.members        || []
   const currentPending = convData.pendingMembers || []
 
   const cleanedUids = [...new Set(memberUids)].filter(
@@ -113,43 +114,39 @@ export async function inviteGroupMembers(convId, inviterUid, memberUids, names =
 
   if (!cleanedUids.length) return
 
-  const inviterName = convData.memberNames?.[inviterUid] || 'Someone'
+  const inviterName  = convData.memberNames?.[inviterUid]  || 'Someone'
   const inviterPhoto = convData.memberPhotos?.[inviterUid] || ''
 
   await updateDoc(convRef, {
     pendingMembers: arrayUnion(...cleanedUids),
-    memberNames: { ...(convData.memberNames || {}), ...names },
+    memberNames:  { ...(convData.memberNames  || {}), ...names },
     memberPhotos: { ...(convData.memberPhotos || {}), ...photos },
   })
 
-  // Check for existing invites and deduplicate
   for (const uid of cleanedUids) {
     try {
       const notifsSnap = await getDocs(
         query(
           collection(db, 'notifications', uid, 'items'),
-          where('type', '==', 'group_invite'),
+          where('type',    '==', 'group_invite'),
           where('fromUid', '==', inviterUid),
-          where('convId', '==', convId)
+          where('convId',  '==', convId)
         )
       )
 
       if (notifsSnap.docs.length > 0) {
-        // Existing invite found - update timestamp to remind
-        const existingId = notifsSnap.docs[0].id
-        await updateDoc(doc(db, 'notifications', uid, 'items', existingId), {
-          createdAt: serverTimestamp(),
+        await updateDoc(doc(db, 'notifications', uid, 'items', notifsSnap.docs[0].id), {
+          createdAt:   serverTimestamp(),
           createdAtMs: Date.now(),
-          reminded: true,
+          reminded:    true,
         }).catch(() => {})
       } else {
-        // No existing invite - create new notification
         await sendNotification(uid, {
-          type: 'group_invite',
-          title: `${inviterName} invited you to a group`,
-          body: `Join "${convData.groupName || 'this group'}"`,
-          fromUid: inviterUid,
-          fromName: inviterName,
+          type:      'group_invite',
+          title:     `${inviterName} invited you to a group`,
+          body:      `Join "${convData.groupName || 'this group'}"`,
+          fromUid:   inviterUid,
+          fromName:  inviterName,
           fromPhoto: inviterPhoto,
           convId,
           groupName: convData.groupName || '',
@@ -157,13 +154,12 @@ export async function inviteGroupMembers(convId, inviterUid, memberUids, names =
       }
     } catch (err) {
       console.error(`Failed to handle group invite for ${uid}:`, err)
-      // Still send notification as fallback
       await sendNotification(uid, {
-        type: 'group_invite',
-        title: `${inviterName} invited you to a group`,
-        body: `Join "${convData.groupName || 'this group'}"`,
-        fromUid: inviterUid,
-        fromName: inviterName,
+        type:      'group_invite',
+        title:     `${inviterName} invited you to a group`,
+        body:      `Join "${convData.groupName || 'this group'}"`,
+        fromUid:   inviterUid,
+        fromName:  inviterName,
         fromPhoto: inviterPhoto,
         convId,
         groupName: convData.groupName || '',
@@ -172,11 +168,10 @@ export async function inviteGroupMembers(convId, inviterUid, memberUids, names =
   }
 }
 
-// ── Internal helpers ───────────────────────────────────────
+// ── Internal: batch-delete all messages in a conversation ─────────────────────
 async function _deleteMessagesInBatches(convId) {
   const msgsSnap = await getDocs(collection(db, 'conversations', convId, 'messages'))
   const docs = msgsSnap.docs
-
   if (!docs.length) return
 
   const CHUNK = 450
@@ -187,13 +182,11 @@ async function _deleteMessagesInBatches(convId) {
   }
 }
 
-// ── Delete whole group from Firebase ──────────────────────
-// This removes the messages and the group document itself.
-// It does NOT try to delete other users' notification docs.
+// ── Delete an entire group conversation ───────────────────────────────────────
 export async function deleteGroupConversation(convId) {
   cancelAllConvNotifs(convId)
 
-  const convRef = doc(db, 'conversations', convId)
+  const convRef  = doc(db, 'conversations', convId)
   const convSnap = await getDoc(convRef)
   if (!convSnap.exists()) return
 
@@ -201,112 +194,104 @@ export async function deleteGroupConversation(convId) {
   await deleteDoc(convRef)
 }
 
-// ── Accept group invite ───────────────────────────────────
+// ── Accept group invite ───────────────────────────────────────────────────────
 export async function acceptGroupInvite(convId, uid) {
-  const convRef = doc(db, 'conversations', convId)
+  const convRef  = doc(db, 'conversations', convId)
   const convSnap = await getDoc(convRef)
   const convData = convSnap.data()
 
-  if (!convData) throw new Error('Group not found')
+  if (!convData)                                    throw new Error('Group not found')
   if (!convData.pendingMembers?.includes(uid)) throw new Error('No pending invite')
 
   await updateDoc(convRef, {
-    members: arrayUnion(uid),
-    pendingMembers: arrayRemove(uid),
-    [`unreadCount.${uid}`]: 0,
+    members:                    arrayUnion(uid),
+    pendingMembers:             arrayRemove(uid),
+    [`unreadCount.${uid}`]:     0,
   })
 
   const userName = convData.memberNames?.[uid] || 'Someone'
   await _sendSystemMessage(convId, `${userName} joined the group`)
 }
 
-// ── Decline group invite ──────────────────────────────────
+// ── Decline group invite ──────────────────────────────────────────────────────
 export async function declineGroupInvite(convId, uid) {
   await updateDoc(doc(db, 'conversations', convId), {
     pendingMembers: arrayRemove(uid),
   })
 }
 
-// ── Leave group ───────────────────────────────────────────
+// ── Leave group ───────────────────────────────────────────────────────────────
 export async function leaveGroup(convId, uid) {
-  const convRef = doc(db, 'conversations', convId)
+  const convRef  = doc(db, 'conversations', convId)
   const convSnap = await getDoc(convRef)
   const convData = convSnap.data()
 
   if (!convData) throw new Error('Group not found')
 
-  const newMembers = (convData.members || []).filter(m => m !== uid)
+  const newMembers = (convData.members        || []).filter(m => m !== uid)
   const newPending = (convData.pendingMembers || []).filter(m => m !== uid)
-  const newAdmins = (convData.admins || []).filter(a => a !== uid)
+  const newAdmins  = (convData.admins         || []).filter(a => a !== uid)
 
   if (!newMembers.length) {
     await deleteGroupConversation(convId)
     return
   }
 
-  await updateDoc(convRef, {
-    members: newMembers,
-    pendingMembers: newPending,
-    admins: newAdmins,
-  })
+  await updateDoc(convRef, { members: newMembers, pendingMembers: newPending, admins: newAdmins })
 
   const userName = convData.memberNames?.[uid] || 'Someone'
   await _sendSystemMessage(convId, `${userName} left the group`)
 }
 
-// ── Remove member from group ──────────────────────────────
+// ── Remove a member from a group ──────────────────────────────────────────────
 export async function removeGroupMember(convId, targetUid) {
-  const convRef = doc(db, 'conversations', convId)
+  const convRef  = doc(db, 'conversations', convId)
   const convSnap = await getDoc(convRef)
   const convData = convSnap.data()
 
   if (!convData) throw new Error('Group not found')
 
-  const newMembers = (convData.members || []).filter(m => m !== targetUid)
+  const newMembers = (convData.members        || []).filter(m => m !== targetUid)
   const newPending = (convData.pendingMembers || []).filter(m => m !== targetUid)
-  const newAdmins = (convData.admins || []).filter(a => a !== targetUid)
+  const newAdmins  = (convData.admins         || []).filter(a => a !== targetUid)
 
   if (!newMembers.length) {
     await deleteGroupConversation(convId)
     return
   }
 
-  await updateDoc(convRef, {
-    members: newMembers,
-    pendingMembers: newPending,
-    admins: newAdmins,
-  })
+  await updateDoc(convRef, { members: newMembers, pendingMembers: newPending, admins: newAdmins })
 
   const userName = convData.memberNames?.[targetUid] || 'Someone'
   await _sendSystemMessage(convId, `${userName} was removed from the group`)
 }
 
-// ── Internal system message ───────────────────────────────
+// ── Internal: post a system message ──────────────────────────────────────────
 async function _sendSystemMessage(convId, text) {
   const msgRef = doc(collection(db, 'conversations', convId, 'messages'))
   await setDoc(msgRef, {
-    senderId: 'system',
-    type: 'system',
+    senderId:    'system',
+    type:        'system',
     text,
-    reactions: {},
-    readBy: [],
+    reactions:   {},
+    readBy:      [],
     deliveredTo: [],
-    deletedFor: [],
-    unsent: false,
-    createdAt: serverTimestamp(),
-    editedAt: null,
+    deletedFor:  [],
+    unsent:      false,
+    createdAt:   serverTimestamp(),
+    editedAt:    null,
   })
 }
 
-// ── Send message ──────────────────────────────────────────
+// ── Send a message ────────────────────────────────────────────────────────────
 export async function sendMessage(convId, {
   senderId,
-  text = '',
-  type = 'text',
-  fileURL = null,
+  text     = '',
+  type     = 'text',
+  fileURL  = null,
   fileName = null,
   fileSize = null,
-  replyTo = null,
+  replyTo  = null,
 }) {
   const msgRef = doc(collection(db, 'conversations', convId, 'messages'))
   await setDoc(msgRef, {
@@ -317,19 +302,19 @@ export async function sendMessage(convId, {
     fileName,
     fileSize,
     replyTo,
-    reactions: {},
-    readBy: [senderId],
+    reactions:   {},
+    readBy:      [senderId],
     deliveredTo: [senderId],
-    deletedFor: [],
-    unsent: false,
-    createdAt: serverTimestamp(),
-    editedAt: null,
+    deletedFor:  [],
+    unsent:      false,
+    createdAt:   serverTimestamp(),
+    editedAt:    null,
   })
 
   const convSnap = await getDoc(doc(db, 'conversations', convId))
   const convData = convSnap.data()
-  const members = convData?.members || []
-  const isGroup = convData?.type === 'group'
+  const members  = convData?.members || []
+  const isGroup  = convData?.type === 'group'
 
   const unreadUpdates = {}
   members.forEach(uid => {
@@ -349,19 +334,18 @@ export async function sendMessage(convId, {
     ...unreadUpdates,
   })
 
-  const senderName = convData?.memberNames?.[senderId] || 'Someone'
+  const senderName  = convData?.memberNames?.[senderId]  || 'Someone'
   const senderPhoto = convData?.memberPhotos?.[senderId] || ''
-  const groupName = convData?.groupName || ''
+  const groupName   = convData?.groupName || ''
 
   members.forEach(uid => {
     if (uid === senderId) return
-
     scheduleMessageNotif(uid, {
-      fromUid: senderId,
-      fromName: senderName,
-      fromPhoto: senderPhoto,
+      fromUid:     senderId,
+      fromName:    senderName,
+      fromPhoto:   senderPhoto,
       convId,
-      messageId: msgRef.id,
+      messageId:   msgRef.id,
       preview,
       isGroup,
       groupName,
@@ -372,13 +356,13 @@ export async function sendMessage(convId, {
   return msgRef.id
 }
 
-// ── Upload file ───────────────────────────────────────────
+// ── Upload a file via Cloudinary ──────────────────────────────────────────────
 export async function uploadFile(file, convId) {
   const url = await uploadToCloudinary(file, `messages/${convId}`)
   return { url, name: file.name, size: file.size }
 }
 
-// ── Send announcement + notify all members ───────────────
+// ── Send a group announcement ─────────────────────────────────────────────────
 export async function sendAnnouncement(convId, senderUid, text, convData) {
   if (!convData || convData.type !== 'group') {
     throw new Error('Announcements only work in groups')
@@ -386,38 +370,37 @@ export async function sendAnnouncement(convId, senderUid, text, convData) {
 
   const msgRef = doc(collection(db, 'conversations', convId, 'messages'))
   await setDoc(msgRef, {
-    id: msgRef.id,
+    id:          msgRef.id,
     convId,
-    senderId: senderUid,
+    senderId:    senderUid,
     text,
-    type: 'announce',
-    fileURL: null,
-    fileName: null,
-    fileType: null,
-    reactions: {},
-    replyTo: null,
+    type:        'announce',
+    fileURL:     null,
+    fileName:    null,
+    fileType:    null,
+    reactions:   {},
+    replyTo:     null,
     deliveredTo: [senderUid],
-    readBy: [senderUid],
-    unsent: false,
-    deletedFor: [],
-    createdAt: serverTimestamp(),
+    readBy:      [senderUid],
+    unsent:      false,
+    deletedFor:  [],
+    createdAt:   serverTimestamp(),
     createdAtMs: Date.now(),
   })
 
-  // Notify all members except sender
-  const senderName = convData.memberNames?.[senderUid] || 'Someone'
+  const senderName  = convData.memberNames?.[senderUid]  || 'Someone'
   const senderPhoto = convData.memberPhotos?.[senderUid] || ''
-  const members = convData.members || []
-  const pending = convData.pendingMembers || []
-  const allMembers = [...new Set([...members, ...pending])].filter(uid => uid !== senderUid)
+  const allMembers  = [
+    ...new Set([...(convData.members || []), ...(convData.pendingMembers || [])])
+  ].filter(uid => uid !== senderUid)
 
   for (const uid of allMembers) {
     await sendNotification(uid, {
-      type: 'announce',
-      title: `🔔 Announcement in ${convData.groupName || 'a group'}`,
-      body: text.slice(0, 60),
-      fromUid: senderUid,
-      fromName: senderName,
+      type:      'announce',
+      title:     `🔔 Announcement in ${convData.groupName || 'a group'}`,
+      body:      text.slice(0, 60),
+      fromUid:   senderUid,
+      fromName:  senderName,
       fromPhoto: senderPhoto,
       convId,
       groupName: convData.groupName || '',
@@ -427,32 +410,31 @@ export async function sendAnnouncement(convId, senderUid, text, convData) {
   return msgRef.id
 }
 
-// ── Send mention notification ────────────────────────────
+// ── Send a mention notification ───────────────────────────────────────────────
 export async function sendMentionNotif(convId, senderUid, mentionedUid, text, convData) {
-  if (mentionedUid === senderUid) return // Don't notify self
+  if (mentionedUid === senderUid) return
 
-  const senderName = convData?.memberNames?.[senderUid] || 'Someone'
+  const senderName  = convData?.memberNames?.[senderUid]  || 'Someone'
   const senderPhoto = convData?.memberPhotos?.[senderUid] || ''
-  const isGroup = convData?.type === 'group'
+  const isGroup     = convData?.type === 'group'
 
   await sendNotification(mentionedUid, {
-    type: 'mention',
-    title: senderName + ' mentioned you',
-    body: text.slice(0, 60),
-    fromUid: senderUid,
-    fromName: senderName,
+    type:      'mention',
+    title:     `${senderName} mentioned you`,
+    body:      text.slice(0, 60),
+    fromUid:   senderUid,
+    fromName:  senderName,
     fromPhoto: senderPhoto,
     convId,
     groupName: isGroup ? convData.groupName : null,
   }).catch(console.error)
 }
 
-// ── Mark DELIVERED ────────────────────────────────────────
+// ── Mark messages as DELIVERED ────────────────────────────────────────────────
 export async function markDelivered(convId, uid, messages) {
   const undelivered = messages.filter(
     m => m.senderId !== uid && !m.deliveredTo?.includes(uid)
   )
-
   if (!undelivered.length) return
 
   const batch = writeBatch(db)
@@ -461,11 +443,10 @@ export async function markDelivered(convId, uid, messages) {
       deliveredTo: arrayUnion(uid),
     })
   })
-
   await batch.commit()
 }
 
-// ── Mark SEEN + cancel scheduled notifications ────────────
+// ── Mark messages as SEEN ─────────────────────────────────────────────────────
 export async function markSeen(convId, uid, messages) {
   if (!Array.isArray(messages) || !messages.length) return
 
@@ -480,7 +461,7 @@ export async function markSeen(convId, uid, messages) {
     const batch = writeBatch(db)
     unseen.forEach(m => {
       batch.update(doc(db, 'conversations', convId, 'messages', m.id), {
-        readBy: arrayUnion(uid),
+        readBy:      arrayUnion(uid),
         deliveredTo: arrayUnion(uid),
       })
     })
@@ -490,11 +471,11 @@ export async function markSeen(convId, uid, messages) {
       [`unreadCount.${uid}`]: 0,
     })
   } catch (err) {
-    console.error('Failed to mark messages as seen:', err)
+    console.error('markSeen error:', err)
   }
 }
 
-// ── Legacy markRead ───────────────────────────────────────
+// ── Legacy: mark conversation read ───────────────────────────────────────────
 export async function markRead(convId, uid) {
   cancelAllConvNotifs(convId)
   await updateDoc(doc(db, 'conversations', convId), {
@@ -502,23 +483,23 @@ export async function markRead(convId, uid) {
   })
 }
 
-// ── Add reaction + notify message owner ──────────────────
+// ── Add a reaction ────────────────────────────────────────────────────────────
 export async function addReaction(convId, msgId, uid, emoji) {
   await updateDoc(doc(db, 'conversations', convId, 'messages', msgId), {
     [`reactions.${emoji}`]: arrayUnion(uid),
   })
 
   try {
-    const msgSnap = await getDoc(doc(db, 'conversations', convId, 'messages', msgId))
-    const msgData = msgSnap.data()
-    const ownerId = msgData?.senderId
+    const msgSnap  = await getDoc(doc(db, 'conversations', convId, 'messages', msgId))
+    const msgData  = msgSnap.data()
+    const ownerId  = msgData?.senderId
     if (!ownerId || ownerId === uid || ownerId === 'system') return
 
     const convSnap = await getDoc(doc(db, 'conversations', convId))
     const convData = convSnap.data()
-    const isGroup = convData?.type === 'group'
+    const isGroup  = convData?.type === 'group'
 
-    const reactorName = convData?.memberNames?.[uid] || 'Someone'
+    const reactorName  = convData?.memberNames?.[uid]  || 'Someone'
     const reactorPhoto = convData?.memberPhotos?.[uid] || ''
     const preview = msgData.text || (
       msgData.type === 'image' ? 'a photo' :
@@ -527,65 +508,67 @@ export async function addReaction(convId, msgId, uid, emoji) {
     )
 
     await sendNotification(ownerId, {
-      type: 'reaction',
-      title: isGroup ? convData.groupName : reactorName,
-      body: `${reactorName} reacted ${emoji} to: "${preview.slice(0, 40)}"`,
-      fromUid: uid,
-      fromName: reactorName,
+      type:      'reaction',
+      title:     isGroup ? convData.groupName : reactorName,
+      body:      `${reactorName} reacted ${emoji} to: "${preview.slice(0, 40)}"`,
+      fromUid:   uid,
+      fromName:  reactorName,
       fromPhoto: reactorPhoto,
       convId,
       emoji,
       groupName: isGroup ? convData.groupName : null,
     })
   } catch (err) {
-    console.error('Reaction notif error:', err)
+    console.error('addReaction notif error:', err)
   }
 }
 
-// ── Remove reaction ───────────────────────────────────────
+// ── Remove a reaction ─────────────────────────────────────────────────────────
 export async function removeReaction(convId, msgId, uid, emoji) {
   await updateDoc(doc(db, 'conversations', convId, 'messages', msgId), {
     [`reactions.${emoji}`]: arrayRemove(uid),
   })
 }
 
-// ── Soft delete ───────────────────────────────────────────
+// ── Soft-delete a message (hide for one user) ─────────────────────────────────
 export async function softDeleteMessage(convId, msgId, uid) {
   await updateDoc(doc(db, 'conversations', convId, 'messages', msgId), {
     deletedFor: arrayUnion(uid),
   })
 }
 
-// ── Unsend (delete for everyone) ─────────────────────────
+// ── Unsend a message (delete for everyone) ────────────────────────────────────
 export async function unsendMessage(convId, msgId) {
   await updateDoc(doc(db, 'conversations', convId, 'messages', msgId), {
-    unsent: true,
-    text: '',
-    fileURL: null,
+    unsent:   true,
+    text:     '',
+    fileURL:  null,
     fileName: null,
   })
 }
 
-// ── Update group info ─────────────────────────────────────
+// ── Update group info ─────────────────────────────────────────────────────────
 export async function updateGroupInfo(convId, data) {
   await updateDoc(doc(db, 'conversations', convId), { ...data })
 }
 
-// ── Toggle pin ────────────────────────────────────────────
+// ── Toggle pin ────────────────────────────────────────────────────────────────
 export async function togglePin(convId, uid, pin) {
   await updateDoc(doc(db, 'conversations', convId), {
     pinnedBy: pin ? arrayUnion(uid) : arrayRemove(uid),
   })
 }
 
-// ── Toggle mute ───────────────────────────────────────────
+// ── Toggle mute ───────────────────────────────────────────────────────────────
 export async function toggleMute(convId, uid, mute) {
   await updateDoc(doc(db, 'conversations', convId), {
     mutedBy: mute ? arrayUnion(uid) : arrayRemove(uid),
   })
 }
 
-// ── Watch conversations ───────────────────────────────────
+// ── Watch all conversations for a user ────────────────────────────────────────
+// Uses a simple array-contains query — NO composite index required.
+// Sorting is done client-side.
 export function watchConversations(uid, callback) {
   const q = query(
     collection(db, 'conversations'),
@@ -598,8 +581,14 @@ export function watchConversations(uid, callback) {
       const convos = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => {
-          const ta = a.lastMessage?.timestamp?.seconds ?? 0
-          const tb = b.lastMessage?.timestamp?.seconds ?? 0
+          // Pinned conversations float to the top
+          const aPinned = a.pinnedBy?.includes(uid) ? 1 : 0
+          const bPinned = b.pinnedBy?.includes(uid) ? 1 : 0
+          if (bPinned !== aPinned) return bPinned - aPinned
+
+          // Then sort by last message timestamp descending
+          const ta = a.lastMessage?.timestamp?.seconds ?? a.createdAt?.seconds ?? 0
+          const tb = b.lastMessage?.timestamp?.seconds ?? b.createdAt?.seconds ?? 0
           return tb - ta
         })
       callback(convos)
@@ -608,14 +597,14 @@ export function watchConversations(uid, callback) {
   )
 }
 
-// ── Watch messages ────────────────────────────────────────
+// ── Watch messages in a conversation ──────────────────────────────────────────
 export function watchMessages(convId, callback) {
   if (!convId) return () => {}
 
   const q = query(
     collection(db, 'conversations', convId, 'messages'),
     orderBy('createdAt', 'asc'),
-    limit(100)
+    limit(200)
   )
 
   return onSnapshot(
@@ -625,7 +614,7 @@ export function watchMessages(convId, callback) {
   )
 }
 
-// ── Get single conversation ───────────────────────────────
+// ── Get a single conversation ─────────────────────────────────────────────────
 export async function getConversation(convId) {
   if (!convId) return null
   const snap = await getDoc(doc(db, 'conversations', convId))
