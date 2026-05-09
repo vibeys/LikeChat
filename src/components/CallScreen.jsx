@@ -21,6 +21,7 @@ export default function CallScreen({
   calleeName,
   calleePhoto,
   currentUser,
+  // Caller passes these in — callee creates them internally
   localStream: initialLocalStream,
   pc: initialPc,
   cleanup: initialCleanup,
@@ -31,60 +32,38 @@ export default function CallScreen({
   const [localStream,  setLocalStream]  = useState(initialLocalStream ?? null)
   const [muted,        setMuted]        = useState(false)
   const [camOff,       setCamOff]       = useState(false)
-  const [speaker,      setSpeaker]      = useState(true)
   const [elapsed,      setElapsed]      = useState(0)
   const [pipMode,      setPipMode]      = useState(false)
 
-  const pcRef         = useRef(initialPc ?? null)
-  const cleanupRef    = useRef(initialCleanup ?? null)
-  const timerRef      = useRef(null)
+  const pcRef        = useRef(null)
+  const cleanupRef   = useRef(initialCleanup ?? null)
+  const timerRef     = useRef(null)
+  const endedRef     = useRef(false)
   const localVideoRef  = useRef(null)
   const remoteVideoRef = useRef(null)
-  const endedRef      = useRef(false)
 
   const otherName  = isCaller ? calleeName  : callerName
   const otherPhoto = isCaller ? calleePhoto : callerPhoto
 
-  // ── Answer the call (callee side) ─────────────────────────────────────────
+  // ── Caller: set pc ref immediately from prop ──────────────────────────────
+  // We use a ref instead of state so it's available synchronously
+  if (isCaller && initialPc && !pcRef.current) {
+    pcRef.current = initialPc
+  }
+
+  // ── Caller: watch for answer + set up ontrack ─────────────────────────────
   useEffect(() => {
-    if (isCaller) return
-
-    ;(async () => {
-      try {
-        const { pc, localStream, cleanup } = await answerCall({
-          callId,
-          type: callType,
-        })
-
-        pcRef.current      = pc
-        cleanupRef.current = cleanup
-        setLocalStream(localStream)
-        setStatus('active')
-
-        // Attach ontrack directly — must be set before ICE exchange completes
-        pc.ontrack = e => {
-          console.log('callee ontrack fired', e.streams)
-          if (e.streams?.[0]) setRemoteStream(e.streams[0])
-        }
-
-      } catch (err) {
-        toast.error(err.message || 'Failed to connect call')
-        handleEnd()
-      }
-    })()
-  }, [])
-
-  // ── Caller: watch for answer + remote stream ──────────────────────────────
-  useEffect(() => {
-    if (!isCaller || !pcRef.current) return
+    if (!isCaller) return
+    if (!pcRef.current) return
 
     const pc = pcRef.current
 
-    // Set ontrack FIRST before any ICE exchange
+    // Set ontrack FIRST before anything else
     pc.ontrack = e => {
-      console.log('caller ontrack fired', e.streams)
-      if (e.streams?.[0]) {
-        setRemoteStream(e.streams[0])
+      console.log('[CALLER] ontrack fired, streams:', e.streams?.length)
+      const stream = e.streams?.[0]
+      if (stream) {
+        setRemoteStream(stream)
         setStatus('active')
       }
     }
@@ -93,10 +72,12 @@ export default function CallScreen({
       callId,
       pc,
       onRemoteStream: stream => {
+        console.log('[CALLER] onRemoteStream callback')
         setRemoteStream(stream)
         setStatus('active')
       },
       onStatusChange: s => {
+        console.log('[CALLER] status change:', s)
         if (s === 'active')   setStatus('active')
         if (s === 'declined') {
           toast.error(`${otherName} declined the call`)
@@ -109,6 +90,39 @@ export default function CallScreen({
     return unsub
   }, [isCaller, callId])
 
+  // ── Callee: answer call + set up ontrack ──────────────────────────────────
+  useEffect(() => {
+    if (isCaller) return
+
+    ;(async () => {
+      try {
+        const { pc, localStream, cleanup } = await answerCall({
+          callId,
+          type: callType,
+        })
+
+        pcRef.current      = pc
+        cleanupRef.current = cleanup
+
+        // Set ontrack BEFORE any ICE candidates arrive
+        pc.ontrack = e => {
+          console.log('[CALLEE] ontrack fired, streams:', e.streams?.length)
+          const stream = e.streams?.[0]
+          if (stream) setRemoteStream(stream)
+        }
+
+        setLocalStream(localStream)
+        setStatus('active')
+
+        console.log('[CALLEE] answered call successfully')
+      } catch (err) {
+        console.error('[CALLEE] answerCall error:', err)
+        toast.error(err.message || 'Failed to connect call')
+        handleEnd()
+      }
+    })()
+  }, [])
+
   // ── Callee: watch if caller hangs up ──────────────────────────────────────
   useEffect(() => {
     if (isCaller) return
@@ -118,21 +132,23 @@ export default function CallScreen({
     return unsub
   }, [isCaller, callId])
 
-  // ── Attach local stream to video element ──────────────────────────────────
+  // ── Attach local stream to video ──────────────────────────────────────────
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream
+      localVideoRef.current.play().catch(() => {})
     }
   }, [localStream])
 
-  // ── Attach remote stream to video element ─────────────────────────────────
+  // ── Attach remote stream to video ─────────────────────────────────────────
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      console.log('attaching remote stream to video element')
+    if (!remoteStream) return
+    console.log('attaching remote stream to video element')
+    if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream
-      remoteVideoRef.current.play().catch(err => {
-        console.warn('remote video play failed:', err)
-      })
+      remoteVideoRef.current.play().catch(err =>
+        console.warn('remote video play error:', err)
+      )
     }
   }, [remoteStream])
 
@@ -199,7 +215,7 @@ export default function CallScreen({
 
       <div className={`cs-overlay ${isVideo && remoteStream ? 'cs-video-mode' : 'cs-audio-mode'}`}>
 
-        {/* Remote video (full screen background) */}
+        {/* Remote video full screen */}
         {isVideo && (
           <video
             ref={remoteVideoRef}
@@ -215,19 +231,14 @@ export default function CallScreen({
           <div className="cs-audio-bg">
             <div className={`cs-avatar-ring ${status === 'ringing' ? 'cs-ringing' : ''}`}>
               {otherPhoto ? (
-                <img src={otherPhoto} alt={otherName} className="cs-big-avatar" />
+                <img src={otherPhoto} alt={otherName} className="cs-big-avatar cs-big-avatar-img" />
               ) : (
-                <div
-                  className="cs-big-avatar cs-big-avatar-fallback"
-                  style={{ background: ac.bg, color: ac.text }}
-                >
+                <div className="cs-big-avatar cs-big-avatar-fallback" style={{ background: ac.bg, color: ac.text }}>
                   {getInitials(otherName || '?')}
                 </div>
               )}
             </div>
-
             <h2 className="cs-other-name">{otherName}</h2>
-
             <p className="cs-status-text">
               {status === 'ringing'   && (isCaller ? 'Calling…' : 'Incoming call')}
               {status === 'answering' && 'Connecting…'}
@@ -258,58 +269,26 @@ export default function CallScreen({
           </div>
         )}
 
-        {/* Timer badge (video active) */}
+        {/* Timer badge */}
         {isVideo && remoteStream && status === 'active' && (
           <div className="cs-timer-badge">{fmtTime(elapsed)}</div>
         )}
 
         {/* Controls */}
         <div className="cs-controls">
-          <CallBtn
-            icon={muted ? 'mic_off' : 'mic'}
-            label={muted ? 'Unmute' : 'Mute'}
-            active={muted}
-            onClick={handleToggleMute}
-          />
-
+          <CallBtn icon={muted ? 'mic_off' : 'mic'} label={muted ? 'Unmute' : 'Mute'} active={muted} onClick={handleToggleMute} />
           {isVideo && (
-            <CallBtn
-              icon={camOff ? 'videocam_off' : 'videocam'}
-              label={camOff ? 'Show' : 'Camera'}
-              active={camOff}
-              onClick={handleToggleCam}
-            />
+            <CallBtn icon={camOff ? 'videocam_off' : 'videocam'} label={camOff ? 'Show' : 'Camera'} active={camOff} onClick={handleToggleCam} />
           )}
-
-          <CallBtn
-            icon={speaker ? 'volume_up' : 'volume_off'}
-            label="Speaker"
-            active={!speaker}
-            onClick={() => setSpeaker(v => !v)}
-          />
-
-          <CallBtn
-            icon="call_end"
-            label="End"
-            danger
-            onClick={handleEnd}
-          />
-
+          <CallBtn icon="call_end" label="End" danger onClick={handleEnd} />
           {!isCaller && status !== 'active' && (
-            <CallBtn
-              icon="call_end"
-              label="Decline"
-              danger
-              onClick={handleDecline}
-            />
+            <CallBtn icon="call_end" label="Decline" danger onClick={handleDecline} />
           )}
         </div>
       </div>
     </>
   )
 }
-
-// ── CallBtn ───────────────────────────────────────────────────────────────────
 
 function CallBtn({ icon, label, onClick, active = false, danger = false }) {
   return (
@@ -324,80 +303,60 @@ function CallBtn({ icon, label, onClick, active = false, danger = false }) {
   )
 }
 
-// ── IncomingCallToast ─────────────────────────────────────────────────────────
-
 export function IncomingCallToast({ t, callerName, callerPhoto, callType, onAnswer, onDecline }) {
   const ac = getAvatarColor(callerName || '')
-
   return (
     <>
       <style>{`
         .ict-card {
           width: min(340px, calc(100vw - 24px));
-          border-radius: 20px;
-          border: 1px solid var(--border);
+          border-radius: 20px; border: 1px solid var(--border);
           background: var(--bg-primary);
           box-shadow: 0 16px 48px rgba(0,0,0,0.55);
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 14px;
+          padding: 16px; display: flex; flex-direction: column; gap: 14px;
           animation: ict-pop 0.28s cubic-bezier(0.34,1.56,0.64,1) both;
         }
         @keyframes ict-pop {
           from { opacity:0; transform: scale(0.88) translateY(12px); }
           to   { opacity:1; transform: scale(1) translateY(0); }
         }
-        .ict-top { display: flex; align-items: center; gap: 12px; }
+        .ict-top { display:flex; align-items:center; gap:12px; }
         .ict-avatar {
-          width: 52px; height: 52px; border-radius: 50%; object-fit: cover;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 18px; font-weight: 800; flex-shrink: 0;
+          width:52px; height:52px; border-radius:50%; object-fit:cover;
+          display:flex; align-items:center; justify-content:center;
+          font-size:18px; font-weight:800; flex-shrink:0;
         }
-        .ict-pulse {
-          animation: ict-pulse 1.4s ease infinite;
-        }
+        .ict-pulse { animation: ict-pulse 1.4s ease infinite; }
         @keyframes ict-pulse {
           0%   { box-shadow: 0 0 0 0   rgba(30,144,255,0.45); }
           70%  { box-shadow: 0 0 0 12px rgba(30,144,255,0); }
           100% { box-shadow: 0 0 0 0   rgba(30,144,255,0); }
         }
-        .ict-name { font-size: 15px; font-weight: 800; color: var(--text-primary); margin: 0; }
-        .ict-sub  { font-size: 12px; color: var(--text-tertiary); margin: 3px 0 0; }
-        .ict-btns { display: flex; gap: 10px; }
-        .ict-btn {
-          flex: 1; padding: 11px; border-radius: 14px; border: none;
-          font-size: 13px; font-weight: 800; cursor: pointer;
-          display: flex; align-items: center; justify-content: center; gap: 6px;
-          transition: opacity 0.15s;
+        .ict-name { font-size:15px; font-weight:800; color:var(--text-primary); margin:0; }
+        .ict-sub  { font-size:12px; color:var(--text-tertiary); margin:3px 0 0; }
+        .ict-btns { display:flex; gap:10px; }
+        .ict-btn  {
+          flex:1; padding:11px; border-radius:14px; border:none;
+          font-size:13px; font-weight:800; cursor:pointer;
+          display:flex; align-items:center; justify-content:center; gap:6px;
         }
-        .ict-btn:hover { opacity: 0.85; }
-        .ict-accept  { background: var(--success, #12d65f); color: #000; }
-        .ict-decline { background: var(--danger,  #e53935); color: #fff; }
+        .ict-accept  { background:var(--success,#12d65f); color:#000; }
+        .ict-decline { background:var(--danger,#e53935);  color:#fff; }
       `}</style>
-
       <div className="ict-card">
         <div className="ict-top">
-          {callerPhoto ? (
-            <img src={callerPhoto} alt={callerName} className="ict-avatar ict-pulse" />
-          ) : (
-            <div className="ict-avatar ict-pulse" style={{ background: ac.bg, color: ac.text }}>
-              {getInitials(callerName || '?')}
-            </div>
-          )}
+          {callerPhoto
+            ? <img src={callerPhoto} alt={callerName} className="ict-avatar ict-pulse" />
+            : <div className="ict-avatar ict-pulse" style={{ background: ac.bg, color: ac.text }}>{getInitials(callerName || '?')}</div>
+          }
           <div>
             <p className="ict-name">{callerName}</p>
-            <p className="ict-sub">
-              {callType === 'video' ? '📹 Incoming video call' : '📞 Incoming voice call'}
-            </p>
+            <p className="ict-sub">{callType === 'video' ? '📹 Incoming video call' : '📞 Incoming voice call'}</p>
           </div>
         </div>
-
         <div className="ict-btns">
           <button className="ict-btn ict-accept" onClick={onAnswer}>
-            <span className="material-icons" style={{ fontSize: '18px' }}>
-              {callType === 'video' ? 'videocam' : 'call'}
-            </span>
+            <span className="material-icons" style={{ fontSize: '18px' }}>{callType === 'video' ? 'videocam' : 'call'}</span>
             Answer
           </button>
           <button className="ict-btn ict-decline" onClick={onDecline}>
@@ -410,206 +369,110 @@ export function IncomingCallToast({ t, callerName, callerPhoto, callType, onAnsw
   )
 }
 
-// ── CSS ───────────────────────────────────────────────────────────────────────
-
 const CSS = `
   .cs-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
+    position: fixed; inset: 0; z-index: 200;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-end;
     overflow: hidden;
     animation: cs-in 0.25s ease both;
   }
-
   @keyframes cs-in {
-    from { opacity: 0; transform: scale(1.04); }
-    to   { opacity: 1; transform: scale(1); }
+    from { opacity:0; transform:scale(1.04); }
+    to   { opacity:1; transform:scale(1); }
   }
-
   .cs-audio-mode { background: #0a0a0a; }
   .cs-video-mode { background: #000; }
 
   .cs-remote-video {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
     object-fit: cover;
     transition: opacity 0.4s ease;
   }
 
   .cs-audio-bg {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding-bottom: 160px;
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; padding-bottom: 160px;
     background: radial-gradient(ellipse at 50% 35%, #1a2a3a 0%, #0a0a0a 70%);
   }
 
-  .cs-avatar-ring {
-    border-radius: 50%;
-    padding: 6px;
-    border: 2px solid transparent;
-  }
-
-  .cs-ringing {
-    animation: cs-ring 1.6s ease infinite;
-  }
-
+  .cs-avatar-ring { border-radius:50%; padding:6px; border:2px solid transparent; }
+  .cs-ringing { animation: cs-ring 1.6s ease infinite; }
   @keyframes cs-ring {
     0%,100% { box-shadow: 0 0 0 0   rgba(30,144,255,0.5),  0 0 0 0   rgba(30,144,255,0.25); }
     50%      { box-shadow: 0 0 0 18px rgba(30,144,255,0),   0 0 0 36px rgba(30,144,255,0); }
   }
 
   .cs-big-avatar {
-    width: 108px;
-    height: 108px;
-    border-radius: 50%;
-    object-fit: cover;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    width: 108px; height: 108px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
   }
-
-  .cs-big-avatar-fallback {
-    font-size: 36px;
-    font-weight: 900;
-  }
+  .cs-big-avatar-img     { object-fit: cover; }
+  .cs-big-avatar-fallback { font-size:36px; font-weight:900; }
 
   .cs-other-name {
-    font-size: 26px;
-    font-weight: 800;
-    color: #fff;
-    margin: 0;
+    font-size:26px; font-weight:800; color:#fff; margin:0;
     text-shadow: 0 2px 12px rgba(0,0,0,0.6);
   }
-
-  .cs-status-text {
-    font-size: 14px;
-    color: rgba(255,255,255,0.55);
-    margin: 0;
-    letter-spacing: 0.02em;
-  }
+  .cs-status-text { font-size:14px; color:rgba(255,255,255,0.55); margin:0; }
 
   .cs-local-pip {
-    position: absolute;
-    top: 20px;
-    right: 16px;
-    width: 110px;
-    height: 160px;
-    border-radius: 16px;
-    overflow: hidden;
-    border: 2px solid rgba(255,255,255,0.18);
+    position: absolute; top:20px; right:16px;
+    width:110px; height:160px; border-radius:16px;
+    overflow:hidden; border:2px solid rgba(255,255,255,0.18);
     box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    z-index: 10;
+    cursor:pointer; transition:all 0.2s ease; z-index:10;
   }
+  .cs-local-pip:hover { border-color:rgba(30,144,255,0.6); transform:scale(1.03); }
+  .cs-pip-small { width:72px; height:96px; border-radius:12px; }
 
-  .cs-local-pip:hover {
-    border-color: rgba(30,144,255,0.6);
-    transform: scale(1.03);
-  }
-
-  .cs-pip-small {
-    width: 72px;
-    height: 96px;
-    border-radius: 12px;
-  }
-
-  .cs-local-video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transition: opacity 0.2s;
-  }
+  .cs-local-video { width:100%; height:100%; object-fit:cover; transition:opacity 0.2s; }
 
   .cs-cam-off-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #111;
-    color: rgba(255,255,255,0.4);
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:#111; color:rgba(255,255,255,0.4);
   }
 
   .cs-timer-badge {
-    position: absolute;
-    top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0,0,0,0.55);
-    color: rgba(255,255,255,0.85);
-    font-size: 13px;
-    font-weight: 700;
-    padding: 5px 12px;
-    border-radius: 999px;
-    backdrop-filter: blur(8px);
-    letter-spacing: 0.05em;
-    z-index: 10;
+    position:absolute; top:16px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,0.55); color:rgba(255,255,255,0.85);
+    font-size:13px; font-weight:700; padding:5px 12px;
+    border-radius:999px; backdrop-filter:blur(8px); z-index:10;
   }
 
   .cs-controls {
-    position: relative;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    padding: 20px 24px calc(20px + env(safe-area-inset-bottom));
+    position:relative; z-index:20;
+    display:flex; align-items:center; justify-content:center;
+    gap:14px; width:100%;
+    padding:20px 24px calc(20px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%);
-    width: 100%;
   }
 
   .cs-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    padding: 14px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255,255,255,0.12);
-    color: #fff;
-    cursor: pointer;
-    transition: background 0.15s ease, transform 0.12s ease;
-    backdrop-filter: blur(8px);
-    width: 60px;
-    height: 60px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:5px; width:60px; height:60px; padding:14px;
+    border-radius:50%; border:none;
+    background:rgba(255,255,255,0.12); color:#fff;
+    cursor:pointer; transition:background 0.15s, transform 0.12s;
+    backdrop-filter:blur(8px);
   }
-
-  .cs-btn:hover  { background: rgba(255,255,255,0.2); transform: scale(1.06); }
-  .cs-btn:active { transform: scale(0.95); }
-  .cs-btn-active { background: rgba(255,255,255,0.22); }
-
+  .cs-btn:hover  { background:rgba(255,255,255,0.2); transform:scale(1.06); }
+  .cs-btn:active { transform:scale(0.95); }
+  .cs-btn-active { background:rgba(255,255,255,0.22); }
   .cs-btn-danger {
-    background: var(--danger, #e53935);
-    width: 68px;
-    height: 68px;
-    box-shadow: 0 6px 20px rgba(229,57,53,0.45);
+    background:var(--danger,#e53935); width:68px; height:68px;
+    box-shadow:0 6px 20px rgba(229,57,53,0.45);
   }
-  .cs-btn-danger:hover { background: #c62828; }
-
-  .cs-btn-label {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    display: none;
-  }
+  .cs-btn-danger:hover { background:#c62828; }
+  .cs-btn-label { font-size:10px; font-weight:600; display:none; }
 
   @media (min-width: 480px) {
-    .cs-btn-label { display: block; }
-    .cs-btn       { width: auto; height: auto; border-radius: 20px; padding: 12px 16px; }
-    .cs-btn-danger { width: auto; height: auto; border-radius: 20px; padding: 12px 20px; }
+    .cs-btn-label  { display:block; }
+    .cs-btn        { width:auto; height:auto; border-radius:20px; padding:12px 16px; }
+    .cs-btn-danger { width:auto; height:auto; border-radius:20px; padding:12px 20px; }
   }
 `
