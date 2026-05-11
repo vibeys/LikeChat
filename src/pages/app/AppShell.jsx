@@ -246,7 +246,7 @@ export default function AppShell() {
           onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08) rotate(-4deg)' }}
           onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
         >
-          <span className="material-icons" style={{ fontSize: '20px' }}>chat_bubble</span>
+          <img src="/logo.png" alt="LikeChat" style={{ width: '24px', height: '24px', objectFit: 'contain' }} />
         </button>
 
         {/* Nav items */}

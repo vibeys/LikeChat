@@ -153,7 +153,6 @@ export default function ChatWindow() {
       toast.custom(
         t => (
           <IncomingCallToast
-            t={t}
             callerName={convo.memberNames?.[incoming.callerId] || 'Someone'}
             callerPhoto={convo.memberPhotos?.[incoming.callerId]}
             callType={incoming.type}
@@ -201,14 +200,15 @@ export default function ChatWindow() {
 
       setActiveCall({
         callId,
-        isCaller: true,
-        callType: type,
-        callerName: user.displayName || 'Me',
-        callerPhoto: user.photoURL || null,
+        isCaller:    true,
+        callType:    type,
+        callerName:  user.displayName || 'Me',
+        callerPhoto: user.photoURL    || null,
         calleeName,
         calleePhoto,
         pc,
         localStream,
+        // cleanup passed so CallScreen can stop tracks on end
         cleanup,
       })
     } catch (err) {

@@ -1,98 +1,32 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ─────────────────────────────────────────────────────────
-    // HELPER FUNCTIONS
-    // ─────────────────────────────────────────────────────────
     function isAuth() { return request.auth != null; }
     function isOwner(uid) { return isAuth() && request.auth.uid == uid; }
-    function convPath(convId) {
-      return /databases/$(database)/documents/conversations/$(convId);
-    }
-    function convData(convId) { return get(convPath(convId)).data; }
-    function isConvMember(convId) {
-      return isAuth()
-        && exists(convPath(convId))
-        && request.auth.uid in convData(convId).members;
-    }
 
-    // ─────────────────────────────────────────────────────────
-    // USERS
-    // ─────────────────────────────────────────────────────────
     match /users/{uid} {
-      allow read:   if isAuth();
-      allow write:  if isOwner(uid);
-      allow delete: if isOwner(uid);
+      allow read, write: if isAuth();
     }
-
-    // ─────────────────────────────────────────────────────────
-    // FRIENDS
-    // ─────────────────────────────────────────────────────────
     match /friends/{uid}/list/{contactUid} {
-      allow read:   if isOwner(uid);
-      allow write:  if isAuth() && (request.auth.uid == uid || request.auth.uid == contactUid);
-      allow delete: if isAuth() && (request.auth.uid == uid || request.auth.uid == contactUid);
+      allow read, write: if isAuth();
     }
-
-    // ─────────────────────────────────────────────────────────
-    // CONTACTS
-    // ─────────────────────────────────────────────────────────
     match /contacts/{uid}/list/{contactUid} {
       allow read, write: if isOwner(uid);
     }
-
-    // ─────────────────────────────────────────────────────────
-    // CONVERSATIONS
-    // ─────────────────────────────────────────────────────────
     match /conversations/{convId} {
-      allow read: if isAuth() && (
-        !exists(convPath(convId)) ||
-        request.auth.uid in resource.data.members ||
-        (resource.data.keys().hasAll(['pendingMembers']) &&
-         request.auth.uid in resource.data.pendingMembers)
-      );
-      allow create: if isAuth()
-        && request.auth.uid in request.resource.data.members;
-      allow update: if isAuth() && (
-        request.auth.uid in resource.data.members ||
-        (resource.data.keys().hasAll(['pendingMembers']) &&
-         request.auth.uid in resource.data.pendingMembers)
-      );
-      allow delete: if isAuth() && (
-        request.auth.uid == resource.data.createdBy ||
-        request.auth.uid in resource.data.admins
-      );
-
+      allow read, write: if isAuth();
       match /messages/{msgId} {
-        allow read:   if isConvMember(convId);
-        allow create: if isConvMember(convId)
-          && request.auth.uid == request.resource.data.senderId;
-        allow update: if isConvMember(convId);
-        allow delete: if false;
+        allow read, write: if isAuth();
       }
     }
-
-    // ─────────────────────────────────────────────────────────
-    // NOTIFICATIONS
-    // ─────────────────────────────────────────────────────────
     match /notifications/{uid}/items/{notifId} {
-      allow create:               if isAuth();
-      allow read, update, delete: if isOwner(uid);
+      allow read, write: if isAuth();
     }
-
-    // ─────────────────────────────────────────────────────────
-    // CALLS: WebRTC signaling
-    // Permissive — any authenticated user can read/write.
-    // Tighten these once calling is confirmed working.
-    // ─────────────────────────────────────────────────────────
     match /calls/{callId} {
       allow read, write: if isAuth();
-
       match /callerCandidates/{candidateId} {
         allow read, write: if isAuth();
       }
-
       match /calleeCandidates/{candidateId} {
         allow read, write: if isAuth();
       }
