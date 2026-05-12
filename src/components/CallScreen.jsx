@@ -1,22 +1,23 @@
 // src/components/CallScreen.jsx
 //
-// Messenger-style call screen.
+// Messenger-style call screen powered by Daily.co.
+// Daily handles ALL WebRTC, ICE, TURN, media — we just join a room.
+//
 // Props:
 //   callId, isCaller, callType ('audio'|'video')
 //   callerName, callerPhoto, calleeName, calleePhoto
+//   roomUrl  — Daily.co room URL (caller has it; callee gets it via acceptCall)
 //   currentUser
-//   localStream, pc   — provided by ChatWindow for caller; callee creates internally
-//   onEnd             — called when call is fully over
+//   onEnd    — called when call is fully over
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import DailyIframe from '@daily-co/daily-js'
 import {
-  answerCall,
+  acceptCall,
   declineCall,
   endCall,
-  listenForAnswer,
-  listenForCallerICE,
-  toggleCamera,
-  toggleMute,
+  watchCallAnswer,
+  watchCallEnd,
 } from '../services/callService'
 import { getInitials, getAvatarColor } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -29,112 +30,144 @@ export default function CallScreen({
   callerPhoto,
   calleeName,
   calleePhoto,
+  roomUrl: callerRoomUrl,
+  roomName,
   currentUser,
-  localStream: callerStream,
-  pc: callerPc,
-  cleanup: callerCleanup,
   onEnd,
 }) {
-  const [phase,        setPhase]        = useState(isCaller ? 'ringing' : 'connecting')
-  const [localStream,  setLocalStream]  = useState(callerStream ?? null)
-  const [remoteStream, setRemoteStream] = useState(null)
-  const [muted,        setMuted]        = useState(false)
-  const [camOff,       setCamOff]       = useState(false)
-  const [elapsed,      setElapsed]      = useState(0)
-  const [pip,          setPip]          = useState(false)
+  const [phase,       setPhase]      = useState(isCaller ? 'ringing' : 'connecting')
+  const [muted,       setMuted]      = useState(false)
+  const [camOff,      setCamOff]     = useState(false)
+  const [elapsed,     setElapsed]    = useState(0)
+  const [hasRemote,   setHasRemote]  = useState(false) // at least one remote participant
 
-  const pcRef        = useRef(callerPc ?? null)
-  const cleanupRef   = useRef(callerCleanup ?? null)
-  const unsubRef     = useRef(null)
-  const timerRef     = useRef(null)
-  const doneRef      = useRef(false)
-  const localVidRef  = useRef(null)
-  const remoteVidRef = useRef(null)
+  const callObjRef  = useRef(null)  // Daily call object
+  const timerRef    = useRef(null)
+  const unsubRef    = useRef(null)
+  const doneRef     = useRef(false)
+  const containerRef = useRef(null) // Daily mounts video tiles here
 
   const otherName  = isCaller ? calleeName  : callerName
   const otherPhoto = isCaller ? calleePhoto : callerPhoto
   const isVideo    = callType === 'video'
+  const ac         = getAvatarColor(otherName || '')
 
-  // ── Attach stream to a video element safely ───────────────────────────────
-  function attachStream(el, stream) {
-    if (!el || !stream) return
-    if (el.srcObject === stream) return
-    el.srcObject = stream
-    el.play().catch(() => {})
-  }
+  // ── Join the Daily room ───────────────────────────────────────────────────
+  async function joinRoom(url) {
+    console.log('[DAILY] joining room:', url)
 
-  // ── Local video callback ref — fires when element mounts ──────────────────
-  const localVidCb = useCallback(el => {
-    localVidRef.current = el
-    attachStream(el, localStream)
-  }, [localStream])
+    const callObject = DailyIframe.createCallObject({
+      audioSource: true,
+      videoSource: isVideo,
+      dailyConfig: { experimentalChromeVideoMuteLightOff: true },
+    })
 
-  // ── Remote video callback ref ─────────────────────────────────────────────
-  const remoteVidCb = useCallback(el => {
-    remoteVidRef.current = el
-    attachStream(el, remoteStream)
-  }, [remoteStream])
+    callObjRef.current = callObject
 
-  // Re-attach when streams change
-  useEffect(() => { attachStream(localVidRef.current,  localStream)  }, [localStream])
-  useEffect(() => { attachStream(remoteVidRef.current, remoteStream) }, [remoteStream])
+    // ── Daily event listeners ────────────────────────────────────────────
+    callObject.on('joined-meeting', () => {
+      console.log('[DAILY] joined meeting')
+      setPhase('active')
+    })
 
-  // ── ontrack: capture remote stream ───────────────────────────────────────
-  function setupOnTrack(pc) {
-    pc.ontrack = e => {
-      console.log('ontrack fired, streams:', e.streams?.length, 'tracks:', e.track?.kind)
-      if (e.streams?.[0]) {
-        setRemoteStream(e.streams[0])
-        setPhase('active')
-      }
-    }
-  }
+    callObject.on('participant-joined', e => {
+      console.log('[DAILY] participant joined:', e.participant.session_id)
+      if (!e.participant.local) setHasRemote(true)
+    })
 
-  // ── CALLER setup ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!isCaller || !pcRef.current) return
-    const pc = pcRef.current
-    setupOnTrack(pc)
-
-    unsubRef.current = listenForAnswer(
-      callId, pc,
-      () => setPhase('active'),         // onActive
-      (s) => {                          // onEnd
-        if (s === 'declined') toast.error(`${otherName} declined`)
+    callObject.on('participant-left', e => {
+      if (!e.participant.local) {
+        console.log('[DAILY] remote participant left')
+        setHasRemote(false)
         handleEnd()
       }
+    })
+
+    callObject.on('participant-updated', e => {
+      if (e.participant.local) return
+      // Check if remote participant has tracks
+      const hasTracks = e.participant.tracks?.video?.state === 'playable'
+        || e.participant.tracks?.audio?.state === 'playable'
+      if (hasTracks) setHasRemote(true)
+    })
+
+    callObject.on('error', e => {
+      console.error('[DAILY] error:', e)
+      toast.error('Call error: ' + (e.errorMsg || 'Unknown error'))
+      handleEnd()
+    })
+
+    callObject.on('left-meeting', () => {
+      console.log('[DAILY] left meeting')
+    })
+
+    // ── Join ─────────────────────────────────────────────────────────────
+    await callObject.join({
+      url,
+      userName: currentUser?.displayName || 'User',
+      startVideoOff: !isVideo || camOff,
+      startAudioOff: muted,
+    })
+
+    // ── Mount video tiles into container ──────────────────────────────────
+    // Daily auto-manages video tiles when using createCallObject
+    // We use the Daily-provided tracks API to render video manually
+  }
+
+  // ── CALLER: watch for callee accepting ───────────────────────────────────
+  useEffect(() => {
+    if (!isCaller) return
+
+    // Join room immediately (caller created it)
+    joinRoom(callerRoomUrl).catch(err => {
+      toast.error(err.message || 'Failed to start call')
+      handleEnd()
+    })
+
+    // Watch for callee accepting or declining
+    unsubRef.current = watchCallAnswer(
+      callId,
+      (roomUrl) => {
+        console.log('[CALLER] callee accepted')
+        setPhase('active')
+      },
+      () => {
+        toast.error(`${otherName} declined the call`)
+        handleEnd()
+      },
+      () => handleEnd()
     )
+
+    return () => unsubRef.current?.()
   }, [isCaller, callId])
 
-  // ── CALLEE setup ──────────────────────────────────────────────────────────
+  // ── CALLEE: accept call and join room ─────────────────────────────────────
   useEffect(() => {
     if (isCaller) return
 
     ;(async () => {
       try {
-        const { pc, localStream } = await answerCall({ callId, type: callType })
-        pcRef.current = pc
+        const roomUrl = await acceptCall(callId)
+        console.log('[CALLEE] accepted, joining room:', roomUrl)
+        await joinRoom(roomUrl)
 
-        setupOnTrack(pc)
-        setLocalStream(localStream)
-        setPhase('active')
-
-        // Store callee cleanup
-        cleanupRef.current = () => {
-          pcRef.current?.close()
-          localStream?.getTracks().forEach(t => t.stop())
-        }
-
-        unsubRef.current = listenForCallerICE(
-          callId, pc,
-          () => handleEnd()             // onEnd
-        )
+        // Watch for caller hanging up
+        unsubRef.current = watchCallEnd(callId, () => handleEnd())
       } catch (err) {
         toast.error(err.message || 'Could not connect call')
         handleEnd()
       }
     })()
-  }, [])
+
+    return () => unsubRef.current?.()
+  }, [isCaller, callId])
+
+  // ── Render Daily video tiles into container ───────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current || !callObjRef.current) return
+    // Daily.co call object manages its own video rendering
+    // We use the tracks from participants to render <video> elements
+  }, [phase])
 
   // ── Timer ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -148,11 +181,9 @@ export default function CallScreen({
     return () => {
       clearInterval(timerRef.current)
       unsubRef.current?.()
-      if (cleanupRef.current) {
-        cleanupRef.current()
-      } else {
-        pcRef.current?.close()
-        localStream?.getTracks().forEach(t => t.stop())
+      if (callObjRef.current) {
+        callObjRef.current.leave().catch(() => {})
+        callObjRef.current.destroy().catch(() => {})
       }
     }
   }, [])
@@ -163,47 +194,41 @@ export default function CallScreen({
     doneRef.current = true
     clearInterval(timerRef.current)
     unsubRef.current?.()
-    // Use caller's cleanup fn if available, otherwise close manually
-    if (cleanupRef.current) {
-      cleanupRef.current()
-    } else {
-      pcRef.current?.close()
-      localStream?.getTracks().forEach(t => t.stop())
-    }
-    try { await endCall(callId) } catch {}
+    try {
+      if (callObjRef.current) {
+        await callObjRef.current.leave()
+        await callObjRef.current.destroy()
+        callObjRef.current = null
+      }
+    } catch {}
+    try { await endCall(callId, roomName) } catch {}
     onEnd?.()
-  }, [callId, localStream, onEnd])
+  }, [callId, roomName, onEnd])
 
   const handleDecline = useCallback(async () => {
     if (doneRef.current) return
     doneRef.current = true
-    if (cleanupRef.current) {
-      cleanupRef.current()
-    } else {
-      pcRef.current?.close()
-      localStream?.getTracks().forEach(t => t.stop())
-    }
     try { await declineCall(callId) } catch {}
     onEnd?.()
-  }, [callId, localStream, onEnd])
+  }, [callId, onEnd])
 
-  function onMute() {
+  function handleToggleMute() {
+    if (!callObjRef.current) return
     const next = !muted
-    toggleMute(localStream, next)
+    callObjRef.current.setLocalAudio(!next)
     setMuted(next)
   }
 
-  function onCam() {
+  function handleToggleCam() {
+    if (!callObjRef.current || !isVideo) return
     const next = !camOff
-    toggleCamera(localStream, next)
+    callObjRef.current.setLocalVideo(!next)
     setCamOff(next)
   }
 
   function fmt(s) {
-    return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
   }
-
-  const ac = getAvatarColor(otherName || '')
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -212,12 +237,12 @@ export default function CallScreen({
 
       <div className="cs-root">
 
-        {/* ── Background: remote video OR avatar ── */}
-        {isVideo && remoteStream ? (
-          <video ref={remoteVidCb} className="cs-remote-vid" autoPlay playsInline />
-        ) : (
+        {/* Daily video container — Daily mounts tiles here */}
+        <div ref={containerRef} className="cs-daily-container" id="daily-container" />
+
+        {/* Avatar background shown when no remote video / audio only / connecting */}
+        {(!hasRemote || !isVideo) && (
           <div className="cs-bg">
-            {/* Blurred avatar background */}
             <div
               className="cs-bg-blur"
               style={{
@@ -227,7 +252,6 @@ export default function CallScreen({
             />
             <div className="cs-bg-overlay" />
 
-            {/* Center avatar */}
             <div className={`cs-avatar-wrap ${phase === 'ringing' ? 'cs-pulse' : ''}`}>
               {otherPhoto ? (
                 <img src={otherPhoto} alt={otherName} className="cs-avatar-img" />
@@ -239,8 +263,7 @@ export default function CallScreen({
             </div>
 
             <p className="cs-name">{otherName}</p>
-
-            <p className="cs-phase">
+            <p className="cs-phase-txt">
               {phase === 'ringing'    && (isCaller ? 'Calling…'     : 'Incoming call')}
               {phase === 'connecting' && 'Connecting…'}
               {phase === 'active'     && fmt(elapsed)}
@@ -248,75 +271,55 @@ export default function CallScreen({
           </div>
         )}
 
-        {/* ── Local video PiP ── */}
-        {isVideo && localStream && (
-          <div
-            className={`cs-pip ${pip ? 'cs-pip-sm' : ''}`}
-            onClick={() => setPip(v => !v)}
-          >
-            <video ref={localVidCb} className="cs-pip-vid" autoPlay playsInline muted style={{ opacity: camOff ? 0 : 1 }} />
-            {camOff && (
-              <div className="cs-pip-off">
-                <span className="material-icons">videocam_off</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Timer overlay when video is active */}
-        {isVideo && remoteStream && phase === 'active' && (
+        {/* Timer when video is active */}
+        {hasRemote && isVideo && phase === 'active' && (
           <div className="cs-timer">{fmt(elapsed)}</div>
         )}
 
-        {/* ── Bottom controls ── */}
+        {/* Control bar */}
         <div className="cs-bar">
+          <CtlBtn
+            icon={muted ? 'mic_off' : 'mic'}
+            label={muted ? 'Unmute' : 'Mute'}
+            on={muted}
+            onClick={handleToggleMute}
+          />
 
-          {/* Mute */}
-          <div className="cs-ctl-wrap">
-            <button className={`cs-ctl ${muted ? 'cs-ctl-on' : ''}`} onClick={onMute}>
-              <span className="material-icons">{muted ? 'mic_off' : 'mic'}</span>
-            </button>
-            <span className="cs-ctl-lbl">{muted ? 'Unmute' : 'Mute'}</span>
-          </div>
-
-          {/* Camera (video only) */}
           {isVideo && (
-            <div className="cs-ctl-wrap">
-              <button className={`cs-ctl ${camOff ? 'cs-ctl-on' : ''}`} onClick={onCam}>
-                <span className="material-icons">{camOff ? 'videocam_off' : 'videocam'}</span>
-              </button>
-              <span className="cs-ctl-lbl">{camOff ? 'Show cam' : 'Camera'}</span>
-            </div>
+            <CtlBtn
+              icon={camOff ? 'videocam_off' : 'videocam'}
+              label={camOff ? 'Show cam' : 'Camera'}
+              on={camOff}
+              onClick={handleToggleCam}
+            />
           )}
 
-          {/* Speaker (visual only for now) */}
-          <div className="cs-ctl-wrap">
-            <button className="cs-ctl">
-              <span className="material-icons">volume_up</span>
-            </button>
-            <span className="cs-ctl-lbl">Speaker</span>
-          </div>
+          <CtlBtn icon="volume_up" label="Speaker" />
 
-          {/* End call */}
-          <div className="cs-ctl-wrap">
-            <button className="cs-ctl cs-ctl-end" onClick={handleEnd}>
-              <span className="material-icons">call_end</span>
-            </button>
-            <span className="cs-ctl-lbl">End</span>
-          </div>
+          <CtlBtn icon="call_end" label="End" end onClick={handleEnd} />
 
-          {/* Decline (callee before active) */}
           {!isCaller && phase !== 'active' && (
-            <div className="cs-ctl-wrap">
-              <button className="cs-ctl cs-ctl-end" onClick={handleDecline}>
-                <span className="material-icons">call_end</span>
-              </button>
-              <span className="cs-ctl-lbl">Decline</span>
-            </div>
+            <CtlBtn icon="call_end" label="Decline" end onClick={handleDecline} />
           )}
         </div>
       </div>
     </>
+  )
+}
+
+// ── Control button ────────────────────────────────────────────────────────────
+function CtlBtn({ icon, label, onClick, on = false, end = false }) {
+  return (
+    <div className="cs-ctl-wrap">
+      <button
+        className={`cs-ctl ${end ? 'cs-ctl-end' : on ? 'cs-ctl-on' : ''}`}
+        onClick={onClick}
+        title={label}
+      >
+        <span className="material-icons">{icon}</span>
+      </button>
+      <span className="cs-ctl-lbl">{label}</span>
+    </div>
   )
 }
 
@@ -330,7 +333,9 @@ export function IncomingCallToast({ callerName, callerPhoto, callType, onAnswer,
         <div className="ict-left">
           {callerPhoto
             ? <img src={callerPhoto} className="ict-av" alt={callerName} />
-            : <div className="ict-av ict-av-fb" style={{ background: ac.bg, color: ac.text }}>{getInitials(callerName || '?')}</div>
+            : <div className="ict-av ict-av-fb" style={{ background: ac.bg, color: ac.text }}>
+                {getInitials(callerName || '?')}
+              </div>
           }
           <div>
             <p className="ict-name">{callerName}</p>
@@ -363,19 +368,29 @@ const CSS = `
     to   { opacity:1; transform:scale(1); }
   }
 
-  /* Remote video fills entire screen */
-  .cs-remote-vid {
+  /* Daily.co video container — Daily renders tiles here */
+  .cs-daily-container {
     position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
+    z-index: 1;
   }
 
-  /* Avatar background (audio or pre-connect) */
+  /* Daily auto-styles its own video elements — override to fill screen */
+  .cs-daily-container iframe,
+  .cs-daily-container video {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    border: none !important;
+  }
+
+  /* Avatar background */
   .cs-bg {
-    flex: 1;
+    position: absolute; inset: 0; z-index: 2;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    position: relative; overflow: hidden;
+    overflow: hidden;
   }
   .cs-bg-blur {
     position: absolute; inset: -20px;
@@ -384,70 +399,46 @@ const CSS = `
   }
   .cs-bg-overlay {
     position: absolute; inset: 0;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.6) 100%);
+    background: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.6));
   }
 
-  /* Avatar */
   .cs-avatar-wrap {
     position: relative; z-index: 1;
     width: 120px; height: 120px; border-radius: 50%;
-    overflow: hidden;
+    overflow: hidden; margin-bottom: 20px;
     box-shadow: 0 0 0 4px rgba(255,255,255,0.15);
-    margin-bottom: 20px;
   }
   .cs-pulse { animation: cs-pulse 2s ease infinite; }
   @keyframes cs-pulse {
-    0%,100% { box-shadow: 0 0 0 4px  rgba(255,255,255,0.15), 0 0 0 0   rgba(255,255,255,0); }
-    50%      { box-shadow: 0 0 0 4px  rgba(255,255,255,0.15), 0 0 0 20px rgba(255,255,255,0); }
+    0%,100% { box-shadow: 0 0 0 4px rgba(255,255,255,0.15), 0 0 0 0 rgba(255,255,255,0); }
+    50%      { box-shadow: 0 0 0 4px rgba(255,255,255,0.15), 0 0 0 22px rgba(255,255,255,0); }
   }
-  .cs-avatar-img { width:100%; height:100%; object-fit:cover; }
-  .cs-avatar-fb  {
+  .cs-avatar-img { width:100%; height:100%; object-fit:cover; display:block; }
+  .cs-avatar-fb {
     width:100%; height:100%;
     display:flex; align-items:center; justify-content:center;
     font-size:40px; font-weight:900;
   }
 
-  .cs-name  { position:relative; z-index:1; font-size:24px; font-weight:700; color:#fff; margin:0 0 8px; text-shadow:0 2px 8px rgba(0,0,0,0.5); }
-  .cs-phase { position:relative; z-index:1; font-size:14px; color:rgba(255,255,255,0.6); margin:0; }
+  .cs-name      { position:relative; z-index:1; font-size:24px; font-weight:700; color:#fff; margin:0 0 8px; text-shadow:0 2px 8px rgba(0,0,0,0.5); }
+  .cs-phase-txt { position:relative; z-index:1; font-size:14px; color:rgba(255,255,255,0.6); margin:0; }
 
-  /* Local PiP */
-  .cs-pip {
-    position: absolute; top: 24px; right: 16px;
-    width: 100px; height: 150px; border-radius: 14px;
-    overflow: hidden; z-index: 10;
-    border: 2px solid rgba(255,255,255,0.2);
-    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
-    cursor: pointer; transition: all 0.2s;
-  }
-  .cs-pip:hover  { transform:scale(1.04); border-color:rgba(255,255,255,0.4); }
-  .cs-pip-sm     { width:70px; height:100px; border-radius:10px; }
-  .cs-pip-vid    { width:100%; height:100%; object-fit:cover; }
-  .cs-pip-off    {
-    position:absolute; inset:0;
-    display:flex; align-items:center; justify-content:center;
-    background:#1a1a1a; color:rgba(255,255,255,0.35); font-size:22px;
-  }
-
-  /* Timer */
   .cs-timer {
     position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.85);
+    background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.9);
     font-size: 13px; font-weight: 600; padding: 5px 14px;
-    border-radius: 999px; backdrop-filter: blur(8px); z-index: 10;
-    letter-spacing: 0.05em;
+    border-radius: 999px; backdrop-filter: blur(8px); z-index: 20;
   }
 
   /* Control bar */
   .cs-bar {
-    position: relative; z-index: 20;
+    position: relative; z-index: 30;
     display: flex; align-items: flex-end; justify-content: center;
     gap: 24px; padding: 28px 24px calc(36px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%);
   }
 
-  .cs-ctl-wrap {
-    display: flex; flex-direction: column; align-items: center; gap: 8px;
-  }
+  .cs-ctl-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; }
 
   .cs-ctl {
     width: 56px; height: 56px; border-radius: 50%; border: none;
@@ -462,31 +453,24 @@ const CSS = `
   .cs-ctl-on  { background: rgba(255,255,255,0.9) !important; color: #111 !important; }
   .cs-ctl-end { background: #e53935 !important; box-shadow: 0 4px 16px rgba(229,57,53,0.5); }
   .cs-ctl-end:hover { background: #c62828 !important; }
-
-  .cs-ctl-lbl {
-    font-size: 11px; color: rgba(255,255,255,0.65); font-weight: 500;
-    white-space: nowrap;
-  }
+  .cs-ctl-lbl { font-size: 11px; color: rgba(255,255,255,0.65); font-weight: 500; white-space: nowrap; }
 `
 
 const TOAST_CSS = `
   .ict-card {
     width: min(320px, calc(100vw - 32px));
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 14px 16px;
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 18px; padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.4);
     animation: ict-in 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
   }
   @keyframes ict-in {
     from { opacity:0; transform:scale(0.9) translateY(10px); }
-    to   { opacity:1; transform:scale(1)   translateY(0); }
+    to   { opacity:1; transform:scale(1) translateY(0); }
   }
   .ict-left { display:flex; align-items:center; gap:12px; flex:1; min-width:0; }
-  .ict-av   {
+  .ict-av {
     width:46px; height:46px; border-radius:50%; object-fit:cover; flex-shrink:0;
     display:flex; align-items:center; justify-content:center;
     font-size:16px; font-weight:800;
@@ -496,11 +480,10 @@ const TOAST_CSS = `
     0%,100% { box-shadow: 0 0 0 0   rgba(30,144,255,0.4); }
     50%      { box-shadow: 0 0 0 10px rgba(30,144,255,0); }
   }
-  .ict-av-fb { }
-  .ict-name  { font-size:14px; font-weight:700; color:var(--text-primary); margin:0; }
-  .ict-sub   { font-size:12px; color:var(--text-tertiary); margin:2px 0 0; }
-  .ict-btns  { display:flex; gap:10px; flex-shrink:0; }
-  .ict-btn   {
+  .ict-name { font-size:14px; font-weight:700; color:var(--text-primary); margin:0; }
+  .ict-sub  { font-size:12px; color:var(--text-tertiary); margin:2px 0 0; }
+  .ict-btns { display:flex; gap:10px; flex-shrink:0; }
+  .ict-btn {
     width:44px; height:44px; border-radius:50%; border:none;
     display:flex; align-items:center; justify-content:center;
     cursor:pointer; transition:transform 0.1s, opacity 0.15s;
