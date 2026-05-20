@@ -1,20 +1,22 @@
 // src/services/callService.js
 //
-// Call signaling using Daily.co for media + Firestore for call state/notifications.
-// Daily.co handles ALL WebRTC, ICE, TURN — we just create rooms and join them.
+// Jitsi-based call signaling using Firestore only.
+// No Daily API key, no room creation API, no billing.
+// Jitsi rooms are public room names on meet.jit.si.
 //
 // Firestore schema:
 //   calls/{callId}
 //     callerId, calleeId, convId, type ('audio'|'video')
 //     status: 'ringing' | 'active' | 'ended' | 'declined' | 'missed'
-//     roomUrl: string   — Daily.co room URL
-//     roomName: string  — Daily.co room name
+//     roomName: string
+//     roomUrl:  string
 //     createdAt, endedAt
 
 import {
   addDoc,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   serverTimestamp,
@@ -23,157 +25,162 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 
-const DAILY_API_KEY    = '340064ddc13b2214b63a132d7c9fbc64b9c78624d02f035cf92991104588f5f1'
-const DAILY_DOMAIN     = 'likechat.daily.co'
-const DAILY_API_BASE   = 'https://api.daily.co/v1'
+const JITSI_DOMAIN   = 'meet.jit.si'
+const JITSI_BASE_URL = `https://${JITSI_DOMAIN}`
 
-// ── Create a Daily.co room via REST API ───────────────────────────────────────
-async function createDailyRoom() {
-  const res = await fetch(`${DAILY_API_BASE}/rooms`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${DAILY_API_KEY}`,
-    },
-    body: JSON.stringify({
-      properties: {
-        exp: Math.floor(Date.now() / 1000) + 3600, // expires in 1 hour
-        enable_chat: false,
-        enable_screenshare: false,
-        max_participants: 2,
-        start_video_off: false,
-        start_audio_off: false,
-      },
-    }),
-  })
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(`Failed to create room: ${err.error || res.status}`)
-  }
-
-  const room = await res.json()
-  return { roomUrl: room.url, roomName: room.name }
+function safePart(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 32)
 }
 
-// ── Delete a Daily.co room ────────────────────────────────────────────────────
-async function deleteDailyRoom(roomName) {
-  try {
-    await fetch(`${DAILY_API_BASE}/rooms/${roomName}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${DAILY_API_KEY}` },
-    })
-  } catch {
-    // Ignore — room may already be deleted
-  }
+function makeRoomName({ convId, type, callerId }) {
+  const conv  = safePart(convId)   || 'chat'
+  const who   = safePart(callerId) || 'user'
+  const kind  = type === 'video' ? 'video' : 'audio'
+  const stamp = Date.now().toString(36)
+  const rand  = Math.random().toString(36).slice(2, 8)
+  return `likechat-${conv}-${kind}-${who}-${stamp}-${rand}`
 }
 
-// ── Firestore helpers ─────────────────────────────────────────────────────────
-function callRef(callId) { return doc(db, 'calls', callId) }
+function buildRoomUrl(roomName) {
+  return `${JITSI_BASE_URL}/${encodeURIComponent(roomName)}`
+}
 
-// ── Start a call (caller side) ────────────────────────────────────────────────
-// Creates a Daily room, stores it in Firestore, returns { callId, roomUrl }
+function callRef(callId) {
+  return doc(db, 'calls', callId)
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/** Start a call (caller side). Returns { callId, roomName, roomUrl }. */
 export async function startCall({ callerId, calleeId, convId, type }) {
-  console.log('[CALL] startCall:', { callerId, calleeId, type })
-
-  const { roomUrl, roomName } = await createDailyRoom()
-  console.log('[CALL] room created:', roomUrl)
+  const roomName = makeRoomName({ convId, type, callerId })
+  const roomUrl  = buildRoomUrl(roomName)
 
   const ref = await addDoc(collection(db, 'calls'), {
     callerId,
     calleeId,
     convId,
     type,
-    status:   'ringing',
-    roomUrl,
+    status: 'ringing',
     roomName,
+    roomUrl,
     createdAt: serverTimestamp(),
   })
 
-  console.log('[CALL] Firestore doc created:', ref.id)
-  return { callId: ref.id, roomUrl }
+  return { callId: ref.id, roomName, roomUrl }
 }
 
-// ── Watch for call status changes (caller side) ───────────────────────────────
-// Returns { roomUrl } when callee accepts, or status string when declined/ended
+/** Backward-compatible alias. */
+export const initiateCall = startCall
+
+/**
+ * Caller watches for answer / decline / end.
+ * Returns an unsubscribe function.
+ */
 export function watchCallAnswer(callId, onAnswer, onDecline, onEnd) {
   return onSnapshot(callRef(callId), snap => {
     const data = snap.data()
     if (!data) return
-    console.log('[CALL] status update:', data.status)
 
-    if (data.status === 'active')   onAnswer?.(data.roomUrl)
-    if (data.status === 'declined') onDecline?.()
+    if (data.status === 'active')                         onAnswer?.(data.roomUrl)
+    if (data.status === 'declined')                       onDecline?.()
     if (data.status === 'ended' || data.status === 'missed') onEnd?.()
   })
 }
 
-// ── Accept a call (callee side) ───────────────────────────────────────────────
-// Returns roomUrl so callee can join the Daily room
+/** Callee accepts a ringing call. Returns the Jitsi room URL. */
 export async function acceptCall(callId) {
-  const snap = await new Promise(resolve => {
-    const unsub = onSnapshot(callRef(callId), s => {
-      unsub()
-      resolve(s)
-    })
-  })
-
+  const snap = await getDoc(callRef(callId))
   const data = snap.data()
-  if (!data?.roomUrl) throw new Error('No room URL found')
+
+  if (!data?.roomUrl) throw new Error('No room URL found for this call.')
 
   await updateDoc(callRef(callId), { status: 'active' })
   return data.roomUrl
 }
 
-// ── Watch for caller hanging up (callee side) ─────────────────────────────────
+/**
+ * Callee watches for the caller hanging up.
+ * Returns an unsubscribe function.
+ */
 export function watchCallEnd(callId, onEnd) {
   let activated = false
+
   return onSnapshot(callRef(callId), snap => {
-    const s = snap.data()?.status
-    if (s === 'active') { activated = true; return }
-    if (activated && (s === 'ended' || s === 'missed')) onEnd?.()
+    const status = snap.data()?.status
+
+    if (status === 'active') {
+      activated = true
+      return
+    }
+
+    if (activated && (status === 'ended' || status === 'missed')) {
+      onEnd?.()
+    }
   })
 }
 
-// ── Watch incoming calls ──────────────────────────────────────────────────────
+/** Watch for incoming calls directed at a given uid. */
 export function watchIncomingCalls(uid, onIncoming) {
   const q = query(
     collection(db, 'calls'),
     where('calleeId', '==', uid),
     where('status',   '==', 'ringing')
   )
+
   return onSnapshot(q, snap => {
     snap.docChanges().forEach(ch => {
       if (ch.type === 'added') {
-        console.log('[CALL] incoming call:', ch.doc.id)
         onIncoming({ callId: ch.doc.id, ...ch.doc.data() })
       }
     })
   })
 }
 
-// ── End / Decline / Missed ────────────────────────────────────────────────────
-export async function endCall(callId, roomName) {
+/** Mark a call as ended. */
+export async function endCall(callId) {
   try {
-    await updateDoc(callRef(callId), { status: 'ended', endedAt: serverTimestamp() })
-    if (roomName) await deleteDailyRoom(roomName)
+    await updateDoc(callRef(callId), {
+      status:  'ended',
+      endedAt: serverTimestamp(),
+    })
   } catch (err) {
     console.error('[CALL] endCall error:', err)
   }
 }
 
+/** Mark a call as declined. */
 export async function declineCall(callId) {
   try {
-    await updateDoc(callRef(callId), { status: 'declined', endedAt: serverTimestamp() })
+    await updateDoc(callRef(callId), {
+      status:  'declined',
+      endedAt: serverTimestamp(),
+    })
   } catch (err) {
     console.error('[CALL] declineCall error:', err)
   }
 }
 
+/** Mark a call as missed. */
 export async function markCallMissed(callId) {
   try {
-    await updateDoc(callRef(callId), { status: 'missed', endedAt: serverTimestamp() })
+    await updateDoc(callRef(callId), {
+      status:  'missed',
+      endedAt: serverTimestamp(),
+    })
   } catch (err) {
     console.error('[CALL] markCallMissed error:', err)
   }
+}
+
+/** Build a Jitsi room URL from a room name. */
+export function getJitsiRoomUrl(roomName) {
+  return buildRoomUrl(roomName)
 }

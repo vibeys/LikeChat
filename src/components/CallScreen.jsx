@@ -1,17 +1,17 @@
 // src/components/CallScreen.jsx
 //
-// Messenger-style call screen powered by Daily.co.
-// Daily handles ALL WebRTC, ICE, TURN, media — we just join a room.
+// Jitsi-based call screen for LikeChat.
+// Uses the Jitsi meeting UI directly (meet.jit.si).
 //
 // Props:
 //   callId, isCaller, callType ('audio'|'video')
 //   callerName, callerPhoto, calleeName, calleePhoto
-//   roomUrl  — Daily.co room URL (caller has it; callee gets it via acceptCall)
+//   roomUrl  — Jitsi room URL
+//   roomName — room name used for cleanup/state
 //   currentUser
 //   onEnd    — called when call is fully over
 
-import { useEffect, useRef, useState, useCallback } from 'react'
-import DailyIframe from '@daily-co/daily-js'
+import { useEffect, useRef, useCallback } from 'react'
 import {
   acceptCall,
   declineCall,
@@ -19,8 +19,55 @@ import {
   watchCallAnswer,
   watchCallEnd,
 } from '../services/callService'
-import { getInitials, getAvatarColor } from '../lib/utils'
+import { getAvatarColor } from '../lib/utils'
 import toast from 'react-hot-toast'
+
+const JITSI_DOMAIN = 'meet.jit.si'
+const JITSI_SCRIPT_URL = 'https://meet.jit.si/external_api.js'
+
+// ─── Script loader (singleton) ───────────────────────────────────────────────
+
+let jitsiScriptPromise = null
+
+function loadJitsiScript() {
+  if (window.JitsiMeetExternalAPI) return Promise.resolve()
+  if (jitsiScriptPromise) return jitsiScriptPromise
+
+  jitsiScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${JITSI_SCRIPT_URL}"]`)
+
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true })
+      existing.addEventListener(
+        'error',
+        () => reject(new Error('Failed to load Jitsi script')),
+        { once: true }
+      )
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = JITSI_SCRIPT_URL
+    script.async = true
+    script.onload = resolve
+    script.onerror = () => reject(new Error('Failed to load Jitsi script'))
+    document.body.appendChild(script)
+  })
+
+  return jitsiScriptPromise
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function extractRoomName(roomUrlOrName) {
+  if (!roomUrlOrName) return ''
+  const raw = String(roomUrlOrName).trim()
+  if (!raw) return ''
+  if (!/^https?:\/\//i.test(raw)) return raw
+  return raw.replace(/^https?:\/\/[^/]+\//i, '').replace(/\/+$/, '')
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function CallScreen({
   callId,
@@ -35,318 +82,287 @@ export default function CallScreen({
   currentUser,
   onEnd,
 }) {
-  const [phase,       setPhase]      = useState(isCaller ? 'ringing' : 'connecting')
-  const [muted,       setMuted]      = useState(false)
-  const [camOff,      setCamOff]     = useState(false)
-  const [elapsed,     setElapsed]    = useState(0)
-  const [hasRemote,   setHasRemote]  = useState(false) // at least one remote participant
+  const isVideo = callType === 'video'
 
-  const callObjRef  = useRef(null)  // Daily call object
-  const timerRef    = useRef(null)
+  const apiRef      = useRef(null)
+  const initRef     = useRef(false)   // prevents double joinRoom
+  const mountedRef  = useRef(false)
+  const endedRef    = useRef(false)   // prevents double finishEnd
   const unsubRef    = useRef(null)
-  const doneRef     = useRef(false)
-  const containerRef = useRef(null) // Daily mounts video tiles here
+  const containerRef = useRef(null)
 
   const otherName  = isCaller ? calleeName  : callerName
-  const otherPhoto = isCaller ? calleePhoto : callerPhoto
-  const isVideo    = callType === 'video'
-  const ac         = getAvatarColor(otherName || '')
+  // (photo / color kept for future overlay use)
+  // const otherPhoto = isCaller ? calleePhoto : callerPhoto
+  // const colors     = getAvatarColor(otherName || '')
 
-  // ── Join the Daily room ───────────────────────────────────────────────────
-  async function joinRoom(url) {
-    console.log('[DAILY] joining room:', url)
+  // ── Cleanup ────────────────────────────────────────────────────────────────
 
-    const callObject = DailyIframe.createCallObject({
-      audioSource: true,
-      videoSource: isVideo,
-      dailyConfig: { experimentalChromeVideoMuteLightOff: true },
-    })
+  const cleanup = useCallback(() => {
+    unsubRef.current?.()
+    unsubRef.current = null
+    initRef.current  = false
 
-    callObjRef.current = callObject
+    const api = apiRef.current
+    apiRef.current = null
 
-    // ── Daily event listeners ────────────────────────────────────────────
-    callObject.on('joined-meeting', () => {
-      console.log('[DAILY] joined meeting')
-      setPhase('active')
-    })
-
-    callObject.on('participant-joined', e => {
-      console.log('[DAILY] participant joined:', e.participant.session_id)
-      if (!e.participant.local) setHasRemote(true)
-    })
-
-    callObject.on('participant-left', e => {
-      if (!e.participant.local) {
-        console.log('[DAILY] remote participant left')
-        setHasRemote(false)
-        handleEnd()
-      }
-    })
-
-    callObject.on('participant-updated', e => {
-      if (e.participant.local) return
-      // Check if remote participant has tracks
-      const hasTracks = e.participant.tracks?.video?.state === 'playable'
-        || e.participant.tracks?.audio?.state === 'playable'
-      if (hasTracks) setHasRemote(true)
-    })
-
-    callObject.on('error', e => {
-      console.error('[DAILY] error:', e)
-      toast.error('Call error: ' + (e.errorMsg || 'Unknown error'))
-      handleEnd()
-    })
-
-    callObject.on('left-meeting', () => {
-      console.log('[DAILY] left meeting')
-    })
-
-    // ── Join ─────────────────────────────────────────────────────────────
-    await callObject.join({
-      url,
-      userName: currentUser?.displayName || 'User',
-      startVideoOff: !isVideo || camOff,
-      startAudioOff: muted,
-    })
-
-    // ── Mount video tiles into container ──────────────────────────────────
-    // Daily auto-manages video tiles when using createCallObject
-    // We use the Daily-provided tracks API to render video manually
-  }
-
-  // ── CALLER: watch for callee accepting ───────────────────────────────────
-  useEffect(() => {
-    if (!isCaller) return
-
-    // Join room immediately (caller created it)
-    joinRoom(callerRoomUrl).catch(err => {
-      toast.error(err.message || 'Failed to start call')
-      handleEnd()
-    })
-
-    // Watch for callee accepting or declining
-    unsubRef.current = watchCallAnswer(
-      callId,
-      (roomUrl) => {
-        console.log('[CALLER] callee accepted')
-        setPhase('active')
-      },
-      () => {
-        toast.error(`${otherName} declined the call`)
-        handleEnd()
-      },
-      () => handleEnd()
-    )
-
-    return () => unsubRef.current?.()
-  }, [isCaller, callId])
-
-  // ── CALLEE: accept call and join room ─────────────────────────────────────
-  useEffect(() => {
-    if (isCaller) return
-
-    ;(async () => {
-      try {
-        const roomUrl = await acceptCall(callId)
-        console.log('[CALLEE] accepted, joining room:', roomUrl)
-        await joinRoom(roomUrl)
-
-        // Watch for caller hanging up
-        unsubRef.current = watchCallEnd(callId, () => handleEnd())
-      } catch (err) {
-        toast.error(err.message || 'Could not connect call')
-        handleEnd()
-      }
-    })()
-
-    return () => unsubRef.current?.()
-  }, [isCaller, callId])
-
-  // ── Render Daily video tiles into container ───────────────────────────────
-  useEffect(() => {
-    if (!containerRef.current || !callObjRef.current) return
-    // Daily.co call object manages its own video rendering
-    // We use the tracks from participants to render <video> elements
-  }, [phase])
-
-  // ── Timer ─────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (phase !== 'active') return
-    timerRef.current = setInterval(() => setElapsed(n => n + 1), 1000)
-    return () => clearInterval(timerRef.current)
-  }, [phase])
-
-  // ── Cleanup on unmount ────────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      clearInterval(timerRef.current)
-      unsubRef.current?.()
-      if (callObjRef.current) {
-        callObjRef.current.leave().catch(() => {})
-        callObjRef.current.destroy().catch(() => {})
-      }
+    if (api) {
+      try { api.removeAllListeners?.() } catch {}
+      try { api.executeCommand?.('hangup') } catch {}
+      try { api.dispose?.() } catch {}
     }
   }, [])
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-  const handleEnd = useCallback(async () => {
-    if (doneRef.current) return
-    doneRef.current = true
-    clearInterval(timerRef.current)
-    unsubRef.current?.()
+  // ── End / Decline ──────────────────────────────────────────────────────────
+
+  const finishEnd = useCallback(async () => {
+    if (endedRef.current) return
+    endedRef.current = true
+
+    try { await endCall(callId) } catch (err) {
+      console.error('[CALL] endCall error:', err)
+    }
+
+    cleanup()
+    onEnd?.()
+  }, [callId, cleanup, onEnd])
+
+  const finishDecline = useCallback(async () => {
+    if (endedRef.current) return
+    endedRef.current = true
+
+    try { await declineCall(callId) } catch (err) {
+      console.error('[CALL] declineCall error:', err)
+    }
+
+    cleanup()
+    onEnd?.()
+  }, [callId, cleanup, onEnd])
+
+  // ── Join room ──────────────────────────────────────────────────────────────
+
+  async function joinRoom(roomUrl) {
+    if (!roomUrl) throw new Error('Missing room URL.')
+
+    // Strict guard — only one instance allowed
+    if (initRef.current || apiRef.current) return
+    if (!containerRef.current) throw new Error('Call container is not ready.')
+
+    initRef.current = true
+
     try {
-      if (callObjRef.current) {
-        await callObjRef.current.leave()
-        await callObjRef.current.destroy()
-        callObjRef.current = null
+      await loadJitsiScript()
+
+      if (!window.JitsiMeetExternalAPI) {
+        throw new Error('Jitsi API failed to load.')
       }
-    } catch {}
-    try { await endCall(callId, roomName) } catch {}
-    onEnd?.()
-  }, [callId, roomName, onEnd])
 
-  const handleDecline = useCallback(async () => {
-    if (doneRef.current) return
-    doneRef.current = true
-    try { await declineCall(callId) } catch {}
-    onEnd?.()
-  }, [callId, onEnd])
+      const roomNameOnly = extractRoomName(roomUrl)
 
-  function handleToggleMute() {
-    if (!callObjRef.current) return
-    const next = !muted
-    callObjRef.current.setLocalAudio(!next)
-    setMuted(next)
+      const api = new window.JitsiMeetExternalAPI(JITSI_DOMAIN, {
+        roomName: roomNameOnly,
+        parentNode: containerRef.current,
+        userInfo: {
+          displayName: currentUser?.displayName || 'User',
+          email: currentUser?.email || '',
+        },
+        configOverwrite: {
+          // ── Pre-join / branding ──────────────────────────────────────────
+          prejoinPageEnabled:      true,
+          enableWelcomePage:       false,
+          disableDeepLinking:      true,
+          disableInviteFunctions:  true,
+          enableClosePage:         false,
+          hideLobbyButton:         true,
+          hideConferenceSubject:   true,
+          hideConferenceTimer:     true,
+          disableReactions:        true,
+          disableTileView:         false,
+          // ── Media defaults (set here, NOT via executeCommand) ────────────
+          startWithAudioMuted: false,
+          startWithVideoMuted: !isVideo,
+          // ── Toolbar ─────────────────────────────────────────────────────
+          toolbarButtons: [
+            'microphone',
+            'camera',
+            'hangup',
+            'tileview',
+            'select-background',
+            'settings',
+          ],
+        },
+        interfaceConfigOverwrite: {
+          APP_NAME:                      'LikeChat',
+          SHOW_JITSI_WATERMARK:          false,
+          SHOW_WATERMARK_FOR_GUESTS:     false,
+          SHOW_BRAND_WATERMARK:          false,
+          SHOW_POWERED_BY:               false,
+          SHOW_PROMOTIONAL_CLOSE_PAGE:   false,
+          MOBILE_APP_PROMO:              false,
+          DEFAULT_BACKGROUND:            '#0b0b0b',
+          SHOW_CHROME_EXTENSION_BANNER:  false,
+          TOOLBAR_BUTTONS: [
+            'microphone',
+            'camera',
+            'hangup',
+            'tileview',
+            'select-background',
+            'settings',
+          ],
+        },
+      })
+
+      apiRef.current = api
+
+      // ── Event listeners ─────────────────────────────────────────────────
+
+      api.addListener('videoConferenceLeft', () => {
+        if (!mountedRef.current) return
+        finishEnd()
+      })
+
+      api.addListener('readyToClose', () => {
+        if (!mountedRef.current) return
+        finishEnd()
+      })
+
+      // errorOccurred fires for many non-fatal things (e2ee, stats, etc.)
+      // Log it but do NOT hang up automatically.
+      api.addListener('errorOccurred', err => {
+        console.warn('[JITSI] errorOccurred (non-fatal):', err)
+      })
+
+    } catch (err) {
+      initRef.current = false
+      throw err
+    }
   }
 
-  function handleToggleCam() {
-    if (!callObjRef.current || !isVideo) return
-    const next = !camOff
-    callObjRef.current.setLocalVideo(!next)
-    setCamOff(next)
-  }
+  // ── Mount / unmount ────────────────────────────────────────────────────────
 
-  function fmt(s) {
-    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-  }
+  useEffect(() => {
+    mountedRef.current = true
 
-  // ── Render ────────────────────────────────────────────────────────────────
+    return () => {
+      mountedRef.current = false
+      cleanup()
+    }
+  }, [cleanup])
+
+  // ── Caller flow ────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!isCaller) return
+
+    joinRoom(callerRoomUrl).catch(err => {
+      console.error('[CALL] joinRoom (caller):', err)
+      toast.error(err.message || 'Failed to start call')
+      finishEnd()
+    })
+
+    unsubRef.current = watchCallAnswer(
+      callId,
+      () => { /* callee joined — Jitsi handles UI */ },
+      () => {
+        toast.error(`${otherName || 'The other user'} declined the call`)
+        finishEnd()
+      },
+      () => { finishEnd() }
+    )
+
+    return () => {
+      unsubRef.current?.()
+      unsubRef.current = null
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // run once on mount — all deps are stable refs
+
+  // ── Callee flow ────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (isCaller) return
+
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const acceptedRoomUrl = await acceptCall(callId)
+        if (cancelled) return
+
+        await joinRoom(acceptedRoomUrl)
+
+        unsubRef.current = watchCallEnd(callId, () => {
+          if (!cancelled) finishEnd()
+        })
+      } catch (err) {
+        if (cancelled) return
+        console.error('[CALL] callee flow error:', err)
+        toast.error(err.message || 'Could not connect call')
+        finishEnd()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // run once on mount
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
     <>
-      <style>{CSS}</style>
-
-      <div className="cs-root">
-
-        {/* Daily video container — Daily mounts tiles here */}
-        <div ref={containerRef} className="cs-daily-container" id="daily-container" />
-
-        {/* Avatar background shown when no remote video / audio only / connecting */}
-        {(!hasRemote || !isVideo) && (
-          <div className="cs-bg">
-            <div
-              className="cs-bg-blur"
-              style={{
-                backgroundImage: otherPhoto ? `url(${otherPhoto})` : 'none',
-                backgroundColor: otherPhoto ? 'transparent' : ac.bg,
-              }}
-            />
-            <div className="cs-bg-overlay" />
-
-            <div className={`cs-avatar-wrap ${phase === 'ringing' ? 'cs-pulse' : ''}`}>
-              {otherPhoto ? (
-                <img src={otherPhoto} alt={otherName} className="cs-avatar-img" />
-              ) : (
-                <div className="cs-avatar-fb" style={{ background: ac.bg, color: ac.text }}>
-                  {getInitials(otherName || '?')}
-                </div>
-              )}
-            </div>
-
-            <p className="cs-name">{otherName}</p>
-            <p className="cs-phase-txt">
-              {phase === 'ringing'    && (isCaller ? 'Calling…'     : 'Incoming call')}
-              {phase === 'connecting' && 'Connecting…'}
-              {phase === 'active'     && fmt(elapsed)}
-            </p>
-          </div>
-        )}
-
-        {/* Timer when video is active */}
-        {hasRemote && isVideo && phase === 'active' && (
-          <div className="cs-timer">{fmt(elapsed)}</div>
-        )}
-
-        {/* Control bar */}
-        <div className="cs-bar">
-          <CtlBtn
-            icon={muted ? 'mic_off' : 'mic'}
-            label={muted ? 'Unmute' : 'Mute'}
-            on={muted}
-            onClick={handleToggleMute}
-          />
-
-          {isVideo && (
-            <CtlBtn
-              icon={camOff ? 'videocam_off' : 'videocam'}
-              label={camOff ? 'Show cam' : 'Camera'}
-              on={camOff}
-              onClick={handleToggleCam}
-            />
-          )}
-
-          <CtlBtn icon="volume_up" label="Speaker" />
-
-          <CtlBtn icon="call_end" label="End" end onClick={handleEnd} />
-
-          {!isCaller && phase !== 'active' && (
-            <CtlBtn icon="call_end" label="Decline" end onClick={handleDecline} />
-          )}
-        </div>
+      <style>{styles}</style>
+      <div className="call-root">
+        <div ref={containerRef} className="call-stage" />
       </div>
     </>
   )
 }
 
-// ── Control button ────────────────────────────────────────────────────────────
-function CtlBtn({ icon, label, onClick, on = false, end = false }) {
-  return (
-    <div className="cs-ctl-wrap">
-      <button
-        className={`cs-ctl ${end ? 'cs-ctl-end' : on ? 'cs-ctl-on' : ''}`}
-        onClick={onClick}
-        title={label}
-      >
-        <span className="material-icons">{icon}</span>
-      </button>
-      <span className="cs-ctl-lbl">{label}</span>
-    </div>
-  )
-}
+// ─── Incoming call toast ──────────────────────────────────────────────────────
 
-// ── IncomingCallToast ─────────────────────────────────────────────────────────
-export function IncomingCallToast({ callerName, callerPhoto, callType, onAnswer, onDecline }) {
-  const ac = getAvatarColor(callerName || '')
+export function IncomingCallToast({
+  callerName,
+  callerPhoto,
+  callType,
+  onAnswer,
+  onDecline,
+}) {
+  const colors = getAvatarColor(callerName || '')
+
   return (
     <>
-      <style>{TOAST_CSS}</style>
+      <style>{toastStyles}</style>
       <div className="ict-card">
         <div className="ict-left">
-          {callerPhoto
-            ? <img src={callerPhoto} className="ict-av" alt={callerName} />
-            : <div className="ict-av ict-av-fb" style={{ background: ac.bg, color: ac.text }}>
-                {getInitials(callerName || '?')}
-              </div>
-          }
-          <div>
+          {callerPhoto ? (
+            <img src={callerPhoto} className="ict-av" alt={callerName} />
+          ) : (
+            <div
+              className="ict-av ict-av-fb"
+              style={{ background: colors.bg, color: colors.text }}
+            >
+              <span className="material-icons ict-av-icon">person</span>
+            </div>
+          )}
+
+          <div className="ict-text">
             <p className="ict-name">{callerName}</p>
-            <p className="ict-sub">{callType === 'video' ? '📹 Video call' : '📞 Voice call'}</p>
+            <p className="ict-sub">
+              <span className="material-icons ict-sub-icon">
+                {callType === 'video' ? 'videocam' : 'call'}
+              </span>
+              <span>{callType === 'video' ? 'Video call' : 'Voice call'}</span>
+            </p>
           </div>
         </div>
+
         <div className="ict-btns">
-          <button className="ict-btn ict-ans" onClick={onAnswer}>
-            <span className="material-icons">{callType === 'video' ? 'videocam' : 'call'}</span>
+          <button className="ict-btn ict-ans" onClick={onAnswer} type="button" title="Answer">
+            <span className="material-icons">call</span>
           </button>
-          <button className="ict-btn ict-dec" onClick={onDecline}>
+          <button className="ict-btn ict-dec" onClick={onDecline} type="button" title="Decline">
             <span className="material-icons">call_end</span>
           </button>
         </div>
@@ -355,142 +371,126 @@ export function IncomingCallToast({ callerName, callerPhoto, callType, onAnswer,
   )
 }
 
-// ── CSS ───────────────────────────────────────────────────────────────────────
-const CSS = `
-  .cs-root {
-    position: fixed; inset: 0; z-index: 200;
-    display: flex; flex-direction: column;
-    background: #111;
-    animation: cs-in 0.2s ease both;
-  }
-  @keyframes cs-in {
-    from { opacity:0; transform:scale(1.03); }
-    to   { opacity:1; transform:scale(1); }
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const styles = `
+  .call-root {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #0b0b0b;
+    overflow: hidden;
   }
 
-  /* Daily.co video container — Daily renders tiles here */
-  .cs-daily-container {
-    position: absolute; inset: 0;
+  .call-stage {
+    position: absolute;
+    inset: 0;
     z-index: 1;
+    background: #0b0b0b;
   }
 
-  /* Daily auto-styles its own video elements — override to fill screen */
-  .cs-daily-container iframe,
-  .cs-daily-container video {
+  .call-stage iframe {
     position: absolute !important;
     inset: 0 !important;
     width: 100% !important;
     height: 100% !important;
-    object-fit: cover !important;
-    border: none !important;
+    border: 0 !important;
+    background: #0b0b0b !important;
   }
-
-  /* Avatar background */
-  .cs-bg {
-    position: absolute; inset: 0; z-index: 2;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    overflow: hidden;
-  }
-  .cs-bg-blur {
-    position: absolute; inset: -20px;
-    background-size: cover; background-position: center;
-    filter: blur(24px) brightness(0.4) saturate(1.2);
-  }
-  .cs-bg-overlay {
-    position: absolute; inset: 0;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.6));
-  }
-
-  .cs-avatar-wrap {
-    position: relative; z-index: 1;
-    width: 120px; height: 120px; border-radius: 50%;
-    overflow: hidden; margin-bottom: 20px;
-    box-shadow: 0 0 0 4px rgba(255,255,255,0.15);
-  }
-  .cs-pulse { animation: cs-pulse 2s ease infinite; }
-  @keyframes cs-pulse {
-    0%,100% { box-shadow: 0 0 0 4px rgba(255,255,255,0.15), 0 0 0 0 rgba(255,255,255,0); }
-    50%      { box-shadow: 0 0 0 4px rgba(255,255,255,0.15), 0 0 0 22px rgba(255,255,255,0); }
-  }
-  .cs-avatar-img { width:100%; height:100%; object-fit:cover; display:block; }
-  .cs-avatar-fb {
-    width:100%; height:100%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:40px; font-weight:900;
-  }
-
-  .cs-name      { position:relative; z-index:1; font-size:24px; font-weight:700; color:#fff; margin:0 0 8px; text-shadow:0 2px 8px rgba(0,0,0,0.5); }
-  .cs-phase-txt { position:relative; z-index:1; font-size:14px; color:rgba(255,255,255,0.6); margin:0; }
-
-  .cs-timer {
-    position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.9);
-    font-size: 13px; font-weight: 600; padding: 5px 14px;
-    border-radius: 999px; backdrop-filter: blur(8px); z-index: 20;
-  }
-
-  /* Control bar */
-  .cs-bar {
-    position: relative; z-index: 30;
-    display: flex; align-items: flex-end; justify-content: center;
-    gap: 24px; padding: 28px 24px calc(36px + env(safe-area-inset-bottom));
-    background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%);
-  }
-
-  .cs-ctl-wrap { display:flex; flex-direction:column; align-items:center; gap:8px; }
-
-  .cs-ctl {
-    width: 56px; height: 56px; border-radius: 50%; border: none;
-    background: rgba(255,255,255,0.15); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; transition: background 0.15s, transform 0.1s;
-    backdrop-filter: blur(8px);
-  }
-  .cs-ctl .material-icons { font-size: 24px; }
-  .cs-ctl:hover  { background: rgba(255,255,255,0.25); transform: scale(1.06); }
-  .cs-ctl:active { transform: scale(0.94); }
-  .cs-ctl-on  { background: rgba(255,255,255,0.9) !important; color: #111 !important; }
-  .cs-ctl-end { background: #e53935 !important; box-shadow: 0 4px 16px rgba(229,57,53,0.5); }
-  .cs-ctl-end:hover { background: #c62828 !important; }
-  .cs-ctl-lbl { font-size: 11px; color: rgba(255,255,255,0.65); font-weight: 500; white-space: nowrap; }
 `
 
-const TOAST_CSS = `
+const toastStyles = `
   .ict-card {
-    width: min(320px, calc(100vw - 32px));
-    background: var(--bg-primary); border: 1px solid var(--border);
-    border-radius: 18px; padding: 14px 16px;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-    animation: ict-in 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
+    width: min(340px, calc(100vw - 24px));
+    background: rgba(18,18,18,0.98);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.35);
+    backdrop-filter: blur(12px);
   }
-  @keyframes ict-in {
-    from { opacity:0; transform:scale(0.9) translateY(10px); }
-    to   { opacity:1; transform:scale(1) translateY(0); }
+
+  .ict-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
   }
-  .ict-left { display:flex; align-items:center; gap:12px; flex:1; min-width:0; }
+
   .ict-av {
-    width:46px; height:46px; border-radius:50%; object-fit:cover; flex-shrink:0;
-    display:flex; align-items:center; justify-content:center;
-    font-size:16px; font-weight:800;
-    animation: ict-pulse 1.5s ease infinite;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255,255,255,0.08);
   }
-  @keyframes ict-pulse {
-    0%,100% { box-shadow: 0 0 0 0   rgba(30,144,255,0.4); }
-    50%      { box-shadow: 0 0 0 10px rgba(30,144,255,0); }
+
+  .ict-av-fb { overflow: hidden; }
+  .ict-av-icon { font-size: 22px; }
+
+  .ict-text { min-width: 0; }
+
+  .ict-name {
+    margin: 0;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .ict-name { font-size:14px; font-weight:700; color:var(--text-primary); margin:0; }
-  .ict-sub  { font-size:12px; color:var(--text-tertiary); margin:2px 0 0; }
-  .ict-btns { display:flex; gap:10px; flex-shrink:0; }
+
+  .ict-sub {
+    margin: 4px 0 0;
+    color: rgba(255,255,255,0.72);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1.2;
+  }
+
+  .ict-sub-icon { font-size: 16px; }
+
+  .ict-btns {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
   .ict-btn {
-    width:44px; height:44px; border-radius:50%; border:none;
-    display:flex; align-items:center; justify-content:center;
-    cursor:pointer; transition:transform 0.1s, opacity 0.15s;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform .15s ease, opacity .15s ease;
   }
-  .ict-btn .material-icons { font-size:20px; }
-  .ict-btn:hover  { opacity:0.85; }
-  .ict-btn:active { transform:scale(0.93); }
-  .ict-ans { background:#12d65f; color:#000; }
-  .ict-dec { background:#e53935; color:#fff; }
+
+  .ict-btn:hover { transform: translateY(-1px); opacity: 0.95; }
+  .ict-btn .material-icons { font-size: 20px; }
+
+  .ict-ans { background: #1ea752; }
+  .ict-dec { background: #e93d4c; }
+
+  @media (max-width: 480px) {
+    .ict-card { width: calc(100vw - 16px); padding: 12px; }
+    .ict-btns { gap: 8px; }
+    .ict-btn  { width: 40px; height: 40px; }
+  }
 `

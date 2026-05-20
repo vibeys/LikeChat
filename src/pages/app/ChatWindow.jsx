@@ -8,10 +8,9 @@ import {
   markSeen,
 } from '../../services/chatService'
 import {
-  initiateCall,
+  startCall as initiateCall,
   watchIncomingCalls,
   declineCall,
-  endCall,
 } from '../../services/callService'
 import { watchUserPresence } from '../../lib/presence'
 import { useTyping } from '../../lib/typing'
@@ -23,112 +22,117 @@ import { getInitials, getAvatarColor, formatDate } from '../../lib/utils'
 import { ArrowLeft, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function formatLastSeen(lastSeen) {
   if (!lastSeen) return 'Offline'
   const date =
     typeof lastSeen === 'number'
       ? new Date(lastSeen)
       : lastSeen?.toDate?.() ?? new Date(lastSeen)
+
   const diff = Date.now() - date.getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1)  return 'Just now'
+
+  if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
+
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24)  return `${hrs}h ago`
+  if (hrs < 24) return `${hrs}h ago`
+
   return formatDate(date)
 }
 
 function groupByDate(msgs) {
   const groups = []
   let lastDate = null
+
   msgs.forEach(msg => {
-    const d       = msg.createdAt?.toDate?.()
+    const d = msg.createdAt?.toDate?.()
     const dateStr = d ? formatDate(d) : null
+
     if (dateStr && dateStr !== lastDate) {
       groups.push({ type: 'divider', label: dateStr, id: `div-${dateStr}` })
       lastDate = dateStr
     }
+
     groups.push({ type: 'msg', ...msg })
   })
+
   return groups
 }
 
-// ── ChatWindow ────────────────────────────────────────────────────────────────
-
 export default function ChatWindow() {
   const { convId } = useParams()
-  const { user }   = useAuth()
-  const navigate   = useNavigate()
+  const { user } = useAuth()
+  const navigate = useNavigate()
 
-  // ── Chat state ─────────────────────────────────────────────────────────────
-  const [convo,      setConvo]      = useState(null)
-  const [messages,   setMessages]   = useState([])
-  const [presence,   setPresence]   = useState(null)
-  const [replyTo,    setReplyTo]    = useState(null)
-  const [loading,    setLoading]    = useState(true)
-  const [showInfo,   setShowInfo]   = useState(false)
+  const [convo, setConvo] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [presence, setPresence] = useState(null)
+  const [replyTo, setReplyTo] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [showInfo, setShowInfo] = useState(false)
   const [searchMode, setSearchMode] = useState(false)
-  const [searchQ,    setSearchQ]    = useState('')
+  const [searchQ, setSearchQ] = useState('')
 
-  // ── Call state ─────────────────────────────────────────────────────────────
-  // activeCall holds everything needed to render <CallScreen>
-  const [activeCall,    setActiveCall]    = useState(null)
-  // incomingCall holds data shown in the IncomingCallToast before answering
-  const [incomingCall,  setIncomingCall]  = useState(null)
-  const [startingCall,  setStartingCall]  = useState(false) // loading spinner on call btn
+  const [activeCall, setActiveCall] = useState(null)
+  const [startingCall, setStartingCall] = useState(false)
 
-  const bottomRef   = useRef(null)
-  const searchRef   = useRef(null)
+  const bottomRef = useRef(null)
+  const searchRef = useRef(null)
   const messagesRef = useRef([])
-  const isAtBottom  = useRef(true)
+  const isAtBottom = useRef(true)
 
   const { typingUsers } = useTyping(convId, user?.uid)
 
-  useEffect(() => { messagesRef.current = messages }, [messages])
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
-  // ── Load conversation ────────────────────────────────────────────────────
   useEffect(() => {
     if (!convId) return
     setLoading(true)
+
     getConversation(convId)
-      .then(data => { setConvo(data); setLoading(false) })
+      .then(data => {
+        setConvo(data)
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
   }, [convId])
 
-  // ── Subscribe to messages ────────────────────────────────────────────────
   useEffect(() => {
     if (!convId || !user?.uid) return
+
     const unsub = watchMessages(convId, msgs => {
       setMessages(msgs)
       if (isAtBottom.current && document.hasFocus()) {
         markSeen(convId, user.uid, msgs).catch(() => {})
       }
     })
+
     return unsub
   }, [convId, user?.uid])
 
-  // ── Mark seen on focus ───────────────────────────────────────────────────
   useEffect(() => {
     function onFocus() {
       if (convId && user?.uid && isAtBottom.current) {
         markSeen(convId, user.uid, messagesRef.current).catch(() => {})
       }
     }
+
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [convId, user?.uid])
 
-  // ── Watch presence ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!convo || convo.type === 'group') return
+
     const otherUid = convo.members?.find(uid => uid !== user.uid)
     if (!otherUid) return
+
     return watchUserPresence(otherUid, setPresence)
   }, [convo, user?.uid])
 
-  // ── Auto-scroll ──────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     isAtBottom.current = true
@@ -138,17 +142,12 @@ export default function ChatWindow() {
     if (searchMode) searchRef.current?.focus()
   }, [searchMode])
 
-  // ── Watch for incoming calls (DM only) ───────────────────────────────────
   useEffect(() => {
     if (!user?.uid || !convo || convo.type === 'group') return
 
     const unsub = watchIncomingCalls(user.uid, incoming => {
-      // Only show if it belongs to this conversation
       if (incoming.convId !== convId) return
-      // Don't show if we're already in a call
       if (activeCall) return
-
-      setIncomingCall(incoming)
 
       toast.custom(
         t => (
@@ -173,25 +172,24 @@ export default function ChatWindow() {
     return unsub
   }, [user?.uid, convo, convId, activeCall])
 
-  // ── Call action handlers ──────────────────────────────────────────────────
-
   const startCall = useCallback(async (type) => {
     if (!convo || convo.type === 'group') {
       toast.error('Voice/video calls are only available in direct messages')
       return
     }
+
     if (activeCall) {
       toast.error('You are already in a call')
       return
     }
 
-    const otherUid   = convo.members?.find(uid => uid !== user.uid)
+    const otherUid = convo.members?.find(uid => uid !== user.uid)
     const calleeName = convo.memberNames?.[otherUid] || 'Unknown'
     const calleePhoto = convo.memberPhotos?.[otherUid] || null
 
     setStartingCall(true)
     try {
-      const { callId, pc, localStream, cleanup } = await initiateCall({
+      const { callId, roomUrl, roomName } = await initiateCall({
         callerId: user.uid,
         calleeId: otherUid,
         convId,
@@ -200,16 +198,14 @@ export default function ChatWindow() {
 
       setActiveCall({
         callId,
-        isCaller:    true,
-        callType:    type,
-        callerName:  user.displayName || 'Me',
-        callerPhoto: user.photoURL    || null,
+        isCaller: true,
+        callType: type,
+        callerName: user.displayName || 'Me',
+        callerPhoto: user.photoURL || null,
         calleeName,
         calleePhoto,
-        pc,
-        localStream,
-        // cleanup passed so CallScreen can stop tracks on end
-        cleanup,
+        roomUrl,
+        roomName,
       })
     } catch (err) {
       toast.error(err.message || 'Failed to start call')
@@ -219,49 +215,48 @@ export default function ChatWindow() {
   }, [convo, convId, user, activeCall])
 
   const handleAnswerCall = useCallback((incoming) => {
-    const callerName  = convo?.memberNames?.[incoming.callerId] || 'Someone'
+    const callerName = convo?.memberNames?.[incoming.callerId] || 'Someone'
     const callerPhoto = convo?.memberPhotos?.[incoming.callerId] || null
 
-    setIncomingCall(null)
     setActiveCall({
-      callId:     incoming.callId,
-      isCaller:   false,
-      callType:   incoming.type,
+      callId: incoming.callId,
+      isCaller: false,
+      callType: incoming.type,
       callerName,
       callerPhoto,
       calleeName: user.displayName || 'Me',
       calleePhoto: user.photoURL || null,
-      // pc / localStream / cleanup are created inside CallScreen for callee
     })
   }, [convo, user])
 
   const handleDeclineCall = useCallback(async (callId) => {
-    setIncomingCall(null)
-    try { await declineCall(callId) } catch {}
+    try {
+      await declineCall(callId)
+    } catch {}
   }, [])
 
   const handleCallEnd = useCallback(() => {
     setActiveCall(null)
-    setIncomingCall(null)
   }, [])
 
-  // ── Derived values ────────────────────────────────────────────────────────
-  const isGroup    = convo?.type === 'group'
-  const otherUid   = convo?.members?.find(uid => uid !== user.uid)
-  const chatName   = isGroup ? convo?.groupName : convo?.memberNames?.[otherUid] || 'Chat'
-  const chatPhoto  = isGroup ? convo?.groupPhoto : convo?.memberPhotos?.[otherUid]
+  const isGroup = convo?.type === 'group'
+  const otherUid = convo?.members?.find(uid => uid !== user.uid)
+  const chatName = isGroup ? convo?.groupName : convo?.memberNames?.[otherUid] || 'Chat'
+  const chatPhoto = isGroup ? convo?.groupPhoto : convo?.memberPhotos?.[otherUid]
   const avatarColor = getAvatarColor(chatName || '')
 
   const isOnline = !isGroup && presence?.status === 'online'
-  const isAway   = !isGroup && presence?.status === 'away'
+  const isAway = !isGroup && presence?.status === 'away'
 
   const statusText = isGroup
     ? `${convo?.members?.length || 0} members`
-    : isOnline ? 'Online'
-    : isAway   ? 'Away'
-    : presence?.lastSeen
-      ? `Last seen ${formatLastSeen(presence.lastSeen)}`
-      : 'Offline'
+    : isOnline
+      ? 'Online'
+      : isAway
+        ? 'Away'
+        : presence?.lastSeen
+          ? `Last seen ${formatLastSeen(presence.lastSeen)}`
+          : 'Offline'
 
   const whoTyping = Object.keys(typingUsers || {})
     .filter(uid => uid !== user.uid)
@@ -271,24 +266,37 @@ export default function ChatWindow() {
     ? messages.filter(m => m.text?.toLowerCase().includes(searchQ.toLowerCase()))
     : messages
 
-  // ── Loading / not-found states ────────────────────────────────────────────
-  if (loading) return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)' }}>
-      <div className="spinner" />
-    </div>
-  )
+  if (loading) {
+    return (
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--bg-secondary)',
+      }}>
+        <div className="spinner" />
+      </div>
+    )
+  }
 
-  if (!convo) return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <p style={{ color: 'var(--text-tertiary)' }}>Conversation not found.</p>
-    </div>
-  )
+  if (!convo) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: 'var(--text-tertiary)' }}>Conversation not found.</p>
+      </div>
+    )
+  }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)', overflow: 'hidden', position: 'relative' }}>
-
-      {/* ── Topbar ── */}
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      background: 'var(--bg-primary)',
+      overflow: 'hidden',
+      position: 'relative',
+    }}>
       <div className="chat-topbar">
         <button
           onClick={() => navigate('/app/chats')}
@@ -298,35 +306,83 @@ export default function ChatWindow() {
           <ArrowLeft size={20} />
         </button>
 
-        {/* Avatar */}
-        <div style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }} onClick={() => setShowInfo(v => !v)}>
+        <div
+          style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }}
+          onClick={() => setShowInfo(v => !v)}
+        >
           {chatPhoto ? (
-            <img src={chatPhoto} alt={chatName} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+            <img
+              src={chatPhoto}
+              alt={chatName}
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                objectFit: 'cover',
+              }}
+            />
           ) : (
-            <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: avatarColor.bg, color: avatarColor.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', fontWeight: 700 }}>
+            <div
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                background: avatarColor.bg,
+                color: avatarColor.text,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '15px',
+                fontWeight: 700,
+              }}
+            >
               {getInitials(chatName || '?')}
             </div>
           )}
+
           {!isGroup && (
-            <span style={{ position: 'absolute', bottom: 0, right: 0, width: '11px', height: '11px', borderRadius: '50%', border: '2px solid var(--bg-primary)', background: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--offline)' }} />
+            <span
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                right: 0,
+                width: '11px',
+                height: '11px',
+                borderRadius: '50%',
+                border: '2px solid var(--bg-primary)',
+                background: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--offline)',
+              }}
+            />
           )}
         </div>
 
-        {/* Name + status */}
-        <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setShowInfo(v => !v)}>
-          <p style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div
+          style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+          onClick={() => setShowInfo(v => !v)}
+        >
+          <p style={{
+            fontSize: '15px',
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            margin: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
             {chatName}
           </p>
-          <p style={{ fontSize: '12px', margin: 0, color: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--text-tertiary)' }}>
+          <p style={{
+            fontSize: '12px',
+            margin: 0,
+            color: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--text-tertiary)',
+          }}>
             {statusText}
           </p>
         </div>
 
-        {/* Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <TBtn onClick={() => setSearchMode(v => !v)} icon="search" />
 
-          {/* Voice call — DM only */}
           {!isGroup && (
             <TBtn
               onClick={() => startCall('audio')}
@@ -336,7 +392,6 @@ export default function ChatWindow() {
             />
           )}
 
-          {/* Video call — DM only */}
           {!isGroup && (
             <TBtn
               onClick={() => startCall('video')}
@@ -350,27 +405,50 @@ export default function ChatWindow() {
         </div>
       </div>
 
-      {/* ── Search bar ── */}
       {searchMode && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: 'var(--bg-primary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 14px',
+          background: 'var(--bg-primary)',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
+        }}>
           <Search size={15} style={{ color: 'var(--text-tertiary)' }} />
           <input
             ref={searchRef}
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: '14px', color: 'var(--text-primary)' }}
+            style={{
+              flex: 1,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              fontSize: '14px',
+              color: 'var(--text-primary)',
+            }}
             placeholder="Search messages..."
             value={searchQ}
             onChange={e => setSearchQ(e.target.value)}
           />
           <button
-            onClick={() => { setSearchMode(false); setSearchQ('') }}
-            style={{ fontSize: '13px', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => {
+              setSearchMode(false)
+              setSearchQ('')
+            }}
+            style={{
+              fontSize: '13px',
+              color: 'var(--primary)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
           >
             Cancel
           </button>
         </div>
       )}
 
-      {/* ── Messages ── */}
       <div
         className="message-area"
         onScroll={e => {
@@ -397,15 +475,16 @@ export default function ChatWindow() {
             />
           )
         )}
+
         {whoTyping.length > 0 && (
           <div style={{ padding: '4px 14px' }}>
             <TypingIndicator names={whoTyping} />
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Message input ── */}
       <MessageInput
         convId={convId}
         currentUser={user}
@@ -413,7 +492,6 @@ export default function ChatWindow() {
         onCancelReply={() => setReplyTo(null)}
       />
 
-      {/* ── Info panel ── */}
       {showInfo && (
         <InfoPanel
           convo={convo}
@@ -428,7 +506,6 @@ export default function ChatWindow() {
         />
       )}
 
-      {/* ── Active call screen (full-screen overlay) ── */}
       {activeCall && (
         <CallScreen
           {...activeCall}
@@ -439,8 +516,6 @@ export default function ChatWindow() {
     </div>
   )
 }
-
-// ─── TBtn ─────────────────────────────────────────────────────────────────────
 
 function TBtn({ icon, onClick, title, disabled }) {
   return (
@@ -456,11 +531,9 @@ function TBtn({ icon, onClick, title, disabled }) {
   )
 }
 
-// ─── InfoPanel ────────────────────────────────────────────────────────────────
-
 function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUid, onClose, navigate, onStartCall }) {
   const actions = [
-    { label: 'Pin conversation',   icon: 'push_pin',          action: () => toast('Coming soon') },
+    { label: 'Pin conversation', icon: 'push_pin', action: () => toast('Coming soon') },
     { label: 'Mute notifications', icon: 'notifications_off', action: () => toast('Coming soon') },
     ...(!isGroup
       ? [{ label: 'Block user', icon: 'block', action: () => toast('Coming soon'), danger: true }]
@@ -470,27 +543,75 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUi
 
   return (
     <div
-      style={{ position: 'absolute', inset: 0, zIndex: 40, display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.4)' }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 40,
+        display: 'flex',
+        justifyContent: 'flex-end',
+        background: 'rgba(0,0,0,0.4)',
+      }}
       onClick={onClose}
     >
       <div
-        style={{ width: '300px', height: '100%', overflowY: 'auto', background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)', boxShadow: '-4px 0 20px rgba(0,0,0,0.15)' }}
+        style={{
+          width: '300px',
+          height: '100%',
+          overflowY: 'auto',
+          background: 'var(--bg-primary)',
+          borderLeft: '1px solid var(--border)',
+          boxShadow: '-4px 0 20px rgba(0,0,0,0.15)',
+        }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '16px',
+          borderBottom: '1px solid var(--border)',
+        }}>
           <p style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)', margin: 0 }}>
             {isGroup ? 'Group Info' : 'Contact Info'}
           </p>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: '20px' }}>✕</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: '20px' }}>
+            ✕
+          </button>
         </div>
 
-        {/* Avatar + name */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 16px 16px', gap: '8px' }}>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '24px 16px 16px',
+          gap: '8px',
+        }}>
           {chatPhoto ? (
-            <img src={chatPhoto} alt={chatName} style={{ width: '72px', height: '72px', borderRadius: '50%', objectFit: 'cover' }} />
+            <img
+              src={chatPhoto}
+              alt={chatName}
+              style={{
+                width: '72px',
+                height: '72px',
+                borderRadius: '50%',
+                objectFit: 'cover',
+              }}
+            />
           ) : (
-            <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: avatarColor.bg, color: avatarColor.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 700 }}>
+            <div
+              style={{
+                width: '72px',
+                height: '72px',
+                borderRadius: '50%',
+                background: avatarColor.bg,
+                color: avatarColor.text,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px',
+                fontWeight: 700,
+              }}
+            >
               {getInitials(chatName || '?')}
             </div>
           )}
@@ -498,18 +619,23 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUi
           {isGroup && <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', margin: 0 }}>{convo.members?.length} members</p>}
         </div>
 
-        {/* Quick call buttons (DM only) */}
         {!isGroup && onStartCall && (
           <div style={{ display: 'flex', gap: '10px', padding: '0 16px 16px' }}>
             <button
-              onClick={() => { onClose(); onStartCall('audio') }}
+              onClick={() => {
+                onClose()
+                onStartCall('audio')
+              }}
               style={quickCallBtn}
             >
               <span className="material-icons" style={{ fontSize: '18px' }}>call</span>
               Voice
             </button>
             <button
-              onClick={() => { onClose(); onStartCall('video') }}
+              onClick={() => {
+                onClose()
+                onStartCall('video')
+              }}
               style={quickCallBtn}
             >
               <span className="material-icons" style={{ fontSize: '18px' }}>videocam</span>
@@ -518,13 +644,26 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUi
           </div>
         )}
 
-        {/* Action list */}
         <div style={{ borderTop: '1px solid var(--border)', padding: '8px' }}>
           {actions.map(({ label, icon, action, danger }) => (
             <button
               key={label}
               onClick={action}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', borderRadius: '10px', border: 'none', background: 'transparent', cursor: 'pointer', color: danger ? 'var(--danger)' : 'var(--text-primary)', fontSize: '14px', textAlign: 'left', transition: 'background 0.12s' }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '10px 12px',
+                borderRadius: '10px',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                color: danger ? 'var(--danger)' : 'var(--text-primary)',
+                fontSize: '14px',
+                textAlign: 'left',
+                transition: 'background 0.12s',
+              }}
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
@@ -534,15 +673,34 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUi
           ))}
         </div>
 
-        {/* Members (groups) */}
         {isGroup && convo.members && (
           <div style={{ borderTop: '1px solid var(--border)', padding: '8px' }}>
-            <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-tertiary)', padding: '8px 12px 4px', margin: 0 }}>
+            <p style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.6px',
+              color: 'var(--text-tertiary)',
+              padding: '8px 12px 4px',
+              margin: 0,
+            }}>
               Members
             </p>
             {convo.members.map(uid => (
               <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: getAvatarColor(convo.memberNames?.[uid] || '').bg, color: getAvatarColor(convo.memberNames?.[uid] || '').text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  background: getAvatarColor(convo.memberNames?.[uid] || '').bg,
+                  color: getAvatarColor(convo.memberNames?.[uid] || '').text,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}>
                   {getInitials(convo.memberNames?.[uid] || '?')}
                 </div>
                 <div>
@@ -563,9 +721,18 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, currentUi
 }
 
 const quickCallBtn = {
-  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-  padding: '10px', borderRadius: '12px', border: '1px solid var(--border)',
-  background: 'var(--bg-secondary)', color: 'var(--text-primary)',
-  fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+  flex: 1,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  padding: '10px',
+  borderRadius: '12px',
+  border: '1px solid var(--border)',
+  background: 'var(--bg-secondary)',
+  color: 'var(--text-primary)',
+  fontSize: '13px',
+  fontWeight: 700,
+  cursor: 'pointer',
   transition: 'background 0.15s',
 }

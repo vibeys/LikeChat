@@ -1,4 +1,5 @@
 // src/pages/app/AppShell.jsx
+// src/pages/app/AppShell.jsx
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router'
 import { onSnapshot, collection, query, orderBy } from 'firebase/firestore'
