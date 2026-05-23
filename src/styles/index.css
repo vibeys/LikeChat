@@ -2354,3 +2354,46 @@ html {
   background: rgba(30, 144, 255, 0.3);
   color: var(--text-1);
 }
+/* ─────────────────────────────────────────────────────────────────────────
+   LIGHT THEME
+───────────────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-0:   #f9fafb;
+  --bg-1:   #ffffff;
+  --bg-2:   #f3f4f6;
+  --bg-3:   #e5e7eb;
+  --bg-4:   #d1d5db;
+  --border:        #e5e7eb;
+  --border-strong: #d1d5db;
+  --text-1:  #111827;
+  --text-2:  #374151;
+  --text-3:  #6b7280;
+  --text-4:  #9ca3af;
+  --bubble-in:       #e5e7eb;
+  --bubble-in-text:  #111827;
+  --bg-primary:      #ffffff;
+  --bg-secondary:    #f3f4f6;
+  --bg-tertiary:     #e5e7eb;
+  --bg-surface:      #f9fafb;
+  --sidebar-bg:      #f9fafb;
+  --sidebar-surface: #ffffff;
+  --sidebar-hover:   #f3f4f6;
+  --sidebar-active:  #e5e7eb;
+  --text-primary:    #111827;
+  --text-secondary:  #374151;
+  --text-tertiary:   #6b7280;
+  --text-muted:      #9ca3af;
+  --text-invert:     #ffffff;
+  --bubble-sent:         #1e90ff;
+  --bubble-sent-text:    #ffffff;
+  --bubble-received:     #e5e7eb;
+  --bubble-received-text:#111827;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SPIN ANIMATION
+───────────────────────────────────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
