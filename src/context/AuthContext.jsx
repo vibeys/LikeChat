@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged, reload } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 import { goOnline } from '../lib/presence'
@@ -9,23 +9,24 @@ const AuthContext = createContext(null)
 export function useAuth() { return useContext(AuthContext) }
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null)
+  const [user,    setUser]    = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
+  const [error,   setError]   = useState(null)
 
   async function buildUser(firebaseUser) {
     try {
-      const snap = await getDoc(doc(db, 'users', firebaseUser.uid))
+      try { await reload(firebaseUser) } catch (_) {}
+      const snap          = await getDoc(doc(db, 'users', firebaseUser.uid))
       const firestoreData = snap.exists() ? snap.data() : {}
       return {
-        uid:           firebaseUser.uid,
-        email:         firebaseUser.email,
-        emailVerified: firebaseUser.emailVerified,
-        displayName:   firebaseUser.displayName,
+        uid:          firebaseUser.uid,
+        email:        firebaseUser.email,
+        displayName:  firebaseUser.displayName,
         ...firestoreData,
+        // always override with live value from Firebase Auth
+        emailVerified: firebaseUser.emailVerified,
       }
     } catch (err) {
-      // Firestore unreadable (rules not published yet, etc.) — still let user in
       console.warn('AuthContext buildUser error:', err)
       return {
         uid:           firebaseUser.uid,
@@ -38,27 +39,21 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let unsubNotif = () => {}
-
     const unsubAuth = onAuthStateChanged(
       auth,
       async (firebaseUser) => {
         try {
-          // Clean up previous notification listener before setting up a new one
           unsubNotif()
-
           if (firebaseUser) {
             const userData = await buildUser(firebaseUser)
             setUser(userData)
             setError(null)
             goOnline(firebaseUser.uid)
-
-            // Request FCM permission, save token, and wire up foreground toast listener
             unsubNotif = initNotifications(firebaseUser.uid) ?? (() => {})
           } else {
             setUser(null)
             setError(null)
           }
-
           setLoading(false)
         } catch (err) {
           console.error('AuthContext onAuthStateChanged error:', err)
@@ -72,11 +67,7 @@ export function AuthProvider({ children }) {
         setLoading(false)
       }
     )
-
-    return () => {
-      unsubAuth()
-      unsubNotif()
-    }
+    return () => { unsubAuth(); unsubNotif() }
   }, [])
 
   async function refreshUser() {
