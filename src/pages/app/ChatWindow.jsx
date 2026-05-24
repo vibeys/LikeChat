@@ -12,7 +12,13 @@ import {
   startCall as initiateCall,
   watchIncomingCalls,
   declineCall,
+  markCallMissed,
 } from '../../services/callService'
+import {
+  sendCallNotification,
+  sendMissedCallNotification,
+  markNotificationRead,
+} from '../../services/notificationService'
 import { watchUserPresence } from '../../lib/presence'
 import { useTyping } from '../../lib/typing'
 import MessageBubble from '../../components/MessageBubble'
@@ -147,16 +153,46 @@ export default function ChatWindow() {
     setStartingCall(true)
     try {
       const { callId, roomUrl, roomName } = await initiateCall({ callerId: user.uid, calleeId: otherUid, convId, type })
+
+      // Notify callee so they see the call even if the app is backgrounded
+      sendCallNotification(otherUid, {
+        callerUid:   user.uid,
+        callerName:  user.displayName || 'Someone',
+        callerPhoto: user.photoURL    || '',
+        convId,
+        callId,
+        callType: type,
+      }).catch(err => console.warn('Call notif failed:', err?.message))
+
       setActiveCall({
         callId, isCaller: true, callType: type,
         callerName: user.displayName || 'Me', callerPhoto: user.photoURL || null,
         calleeName: convo.memberNames?.[otherUid] || 'Unknown',
         calleePhoto: convo.memberPhotos?.[otherUid] || null,
+        calleeUid: otherUid,
         roomUrl, roomName,
       })
     } catch (err) { toast.error(err.message || 'Failed to start call') }
     finally       { setStartingCall(false) }
   }, [convo, convId, user, activeCall])
+
+  // When caller cancels / call times out without answer, write a missed-call notif
+  const handleCallTimeout = useCallback(async (calleeUid, callId, callType) => {
+    if (!calleeUid) return
+    try {
+      await markCallMissed(callId)
+      await sendMissedCallNotification(calleeUid, {
+        callerUid:   user.uid,
+        callerName:  user.displayName || 'Someone',
+        callerPhoto: user.photoURL    || '',
+        convId,
+        callId,
+        callType: callType || 'audio',
+      })
+    } catch (err) {
+      console.warn('Missed call notif failed:', err?.message)
+    }
+  }, [user, convId])
 
   const handleAnswerCall  = useCallback((incoming) => {
     setActiveCall({

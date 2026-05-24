@@ -3,6 +3,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  updateDoc,
   collection,
   serverTimestamp,
   getDocs,
@@ -90,8 +91,11 @@ export async function sendNotification(toUid, {
 }) {
   if (!toUid) return null
 
-  // Validate notification type
-const validTypes = ['message', 'media', 'reaction', 'friend_request', 'group_invite', 'announce', 'mention']
+  // Validate notification type — includes all supported event kinds
+  const validTypes = [
+    'message', 'media', 'reaction', 'friend_request', 'friend_accepted',
+    'group_invite', 'announce', 'mention', 'call', 'missed_call',
+  ]
   const safeType = validTypes.includes(type) ? type : 'message'
 
   try {
@@ -123,6 +127,18 @@ const validTypes = ['message', 'media', 'reaction', 'friend_request', 'group_inv
       console.error('sendNotification failed:', err?.message || err)
     }
     return null
+  }
+}
+
+// ── Mark a notification as read ───────────────────────────
+export async function markNotificationRead(toUid, notifId) {
+  if (!toUid || !notifId) return
+  try {
+    await updateDoc(doc(db, 'notifications', toUid, 'items', notifId), { read: true })
+  } catch (err) {
+    if (err?.code !== 'not-found') {
+      console.warn('Failed to mark notification as read:', err?.message || err)
+    }
   }
 }
 
@@ -187,7 +203,9 @@ export function scheduleMessageNotif(toUid, {
 
       // Only notify if the recipient hasn't read the message yet
       if (!msgData?.readBy?.includes(toUid)) {
-        const title    = isGroup ? groupName : fromName
+        // For groups: title is "GroupName" so receiver knows which group
+        // For DMs: title is the sender's name
+        const title    = isGroup ? (groupName || 'Group') : fromName
         const notifType = ['image', 'video', 'file'].includes(messageType)
           ? 'media'
           : 'message'
@@ -195,12 +213,12 @@ export function scheduleMessageNotif(toUid, {
         await sendNotification(toUid, {
           type: notifType,
           title,
-          body: preview,
+          body: isGroup ? `${fromName}: ${preview}` : preview,
           fromUid,
           fromName,
           fromPhoto,
           convId,
-          groupName,
+          groupName: isGroup ? (groupName || null) : null,
           data: { messageId, messageType },
         })
       }
@@ -233,5 +251,67 @@ export function cancelAllConvNotifs(convId) {
       clearTimeout(window._notifTimers[key])
       delete window._notifTimers[key]
     }
+  })
+}
+
+// ── Send a call notification ──────────────────────────────
+// Writes an immediate Firestore notification for an incoming call.
+// This shows up in the notification list AND triggers any push
+// (via Cloud Functions / FCM) so the callee is alerted even if
+// the app is backgrounded.
+export async function sendCallNotification(calleeUid, {
+  callerUid,
+  callerName,
+  callerPhoto,
+  convId,
+  callId,
+  callType = 'audio',
+}) {
+  return sendNotification(calleeUid, {
+    type:      'call',
+    title:     callerName || 'Incoming call',
+    body:      callType === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call',
+    fromUid:   callerUid,
+    fromName:  callerName,
+    fromPhoto: callerPhoto,
+    convId,
+    data:      { callId, callType },
+  })
+}
+
+// ── Send a missed-call notification ──────────────────────
+export async function sendMissedCallNotification(calleeUid, {
+  callerUid,
+  callerName,
+  callerPhoto,
+  convId,
+  callId,
+  callType = 'audio',
+}) {
+  return sendNotification(calleeUid, {
+    type:      'missed_call',
+    title:     callerName || 'Missed call',
+    body:      callType === 'video' ? '📹 Missed video call' : '📞 Missed audio call',
+    fromUid:   callerUid,
+    fromName:  callerName,
+    fromPhoto: callerPhoto,
+    convId,
+    data:      { callId, callType },
+  })
+}
+
+// ── Send a friend-accepted notification ──────────────────
+export async function sendFriendAcceptedNotification(toUid, {
+  fromUid,
+  fromName,
+  fromPhoto,
+}) {
+  return sendNotification(toUid, {
+    type:      'friend_accepted',
+    title:     `${fromName || 'Someone'} accepted your friend request`,
+    body:      'You are now friends!',
+    fromUid,
+    fromName,
+    fromPhoto,
   })
 }

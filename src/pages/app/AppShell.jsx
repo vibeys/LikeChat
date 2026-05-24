@@ -1,6 +1,5 @@
 // src/pages/app/AppShell.jsx
-// src/pages/app/AppShell.jsx
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router'
 import { onSnapshot, collection, query, orderBy } from 'firebase/firestore'
 import { useAuth } from '../../context/AuthContext'
@@ -9,7 +8,7 @@ import { watchUserPresence } from '../../lib/presence'
 import { formatTime, getInitials, getAvatarColor } from '../../lib/utils'
 import { logout } from '../../services/authService'
 import { searchByUsername } from '../../services/userService'
-import { deleteNotification } from '../../services/notificationService'
+import { deleteNotification, markNotificationRead } from '../../services/notificationService'
 import { db } from '../../lib/firebase'
 import toast from 'react-hot-toast'
 
@@ -91,7 +90,6 @@ export default function AppShell() {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       setNotifUnread(items.filter(n => !n.read).length)
 
-      // On first load, seed the "seen" set so we don't re-toast existing notifs
       if (!notifBootedRef.current) {
         items.forEach(n => notifSeenRef.current.add(n.id))
         notifBootedRef.current = true
@@ -100,15 +98,12 @@ export default function AppShell() {
 
       snap.docChanges().forEach(change => {
         if (change.type !== 'added') return
-
         const notif = { id: change.doc.id, ...change.doc.data() }
         if (notifSeenRef.current.has(notif.id)) return
         notifSeenRef.current.add(notif.id)
-
         if (!notif.read) showPopupNotif(notif)
       })
 
-      // Keep seen set current
       items.forEach(n => notifSeenRef.current.add(n.id))
     })
 
@@ -122,7 +117,7 @@ export default function AppShell() {
     if (notif.type === 'group_invite') {
       toast.custom(
         t => (
-          <PopupCard>
+          <PopupCard duration={10000}>
             <PopupIcon icon="group" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={popupStyles.title}>
@@ -160,31 +155,64 @@ export default function AppShell() {
             </div>
           </PopupCard>
         ),
-        { duration: 7000 }
+        { duration: 10000 }
       )
       return
     }
 
-    const openLabel =
-      notif.type === 'friend_request' ? 'Open friends' : 'Open chat'
+    const body = (() => {
+      switch (notif.type) {
+        case 'friend_request':  return 'You have a new friend request.'
+        case 'friend_accepted': return `${name} accepted your friend request. You are now friends!`
+        case 'reaction':        return `${name} reacted ${notif.emoji ? notif.emoji + ' ' : ''}to your message.`
+        case 'media':           return `${name} sent you a media message.`
+        case 'mention':         return notif.text ? `${name} mentioned you: "${notif.text}"` : `${name} mentioned you in a chat.`
+        case 'announce':        return notif.text || `New announcement in ${notif.groupName || 'a group'}.`
+        case 'call':            return notif.text || (notif.data?.callType === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call')
+        case 'missed_call':     return notif.text || (notif.data?.callType === 'video' ? '📹 Missed video call' : '📞 Missed audio call')
+        default:                return notif.text || `${name} sent you a message.`
+      }
+    })()
 
-    const body =
-      notif.type === 'friend_request' ? 'You have a new friend request.' :
-      notif.type === 'reaction'       ? `${name} reacted to your message.` :
-      notif.type === 'media'          ? `${name} sent media in a chat.` :
-                                        notif.text || `${name} sent you a message.`
+    const popupIcon = (() => {
+      switch (notif.type) {
+        case 'friend_request':
+        case 'friend_accepted': return 'person_add'
+        case 'reaction':        return 'favorite'
+        case 'mention':         return 'alternate_email'
+        case 'announce':        return 'campaign'
+        case 'call':
+        case 'missed_call':     return notif.data?.callType === 'video' ? 'videocam' : 'call'
+        default:                return 'notifications'
+      }
+    })()
 
-    function handleOpen() {
+    const openLabel = (() => {
+      switch (notif.type) {
+        case 'friend_request':
+        case 'friend_accepted': return 'Open friends'
+        default:                return 'Open chat'
+      }
+    })()
+
+    async function handleOpen() {
       toast.dismiss()
-      if (notif.type === 'friend_request') navigate('/app/friends')
-      else if (notif.convId) navigate(`/app/chats/${notif.convId}`)
-      else navigate('/app/notifications')
+      if (!notif.read) markNotificationRead(user.uid, notif.id).catch(() => {})
+      if (['friend_request', 'friend_accepted'].includes(notif.type)) {
+        navigate('/app/friends')
+      } else if (notif.convId) {
+        navigate(`/app/chats/${notif.convId}`)
+      } else {
+        navigate('/app/notifications')
+      }
     }
+
+    const dur = notif.type === 'call' ? 30000 : 10000
 
     toast.custom(
       t => (
-        <PopupCard onClick={handleOpen}>
-          <PopupIcon icon="notifications" />
+        <PopupCard onClick={handleOpen} duration={dur}>
+          <PopupIcon icon={popupIcon} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={popupStyles.title}>{notif.title || name}</div>
             <div style={popupStyles.body}>{body}</div>
@@ -199,7 +227,7 @@ export default function AppShell() {
           </div>
         </PopupCard>
       ),
-      { duration: 5000 }
+      { duration: dur }
     )
   }
 
@@ -217,12 +245,10 @@ export default function AppShell() {
     return convo.members?.find(uid => uid !== user.uid)
   }
 
-  // ── Filtered + pinned/rest split ───────────────────────────────────────────
   const filtered = convos.filter(c => {
     const name = c.type === 'group'
       ? c.groupName || ''
       : c.memberNames?.[getOtherUid(c)] || ''
-
     if (!name.toLowerCase().includes(search.toLowerCase())) return false
     if (filter === 'unread') return (c.unreadCount?.[user.uid] || 0) > 0
     if (filter === 'groups') return c.type === 'group'
@@ -232,14 +258,12 @@ export default function AppShell() {
   const pinned = filtered.filter(c =>  c.pinnedBy?.includes(user.uid))
   const rest   = filtered.filter(c => !c.pinnedBy?.includes(user.uid))
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app-shell" style={{ background: 'var(--bg-secondary)' }}>
       <style>{SHELL_CSS}</style>
 
       {/* Desktop sidebar */}
       <aside className="desktop-sidebar hide-mobile">
-        {/* Logo / home button */}
         <button
           onClick={() => navigate('/app/chats')}
           title="LikeChat"
@@ -250,7 +274,6 @@ export default function AppShell() {
           <img src="/logo.png" alt="LikeChat" style={{ width: '24px', height: '24px', objectFit: 'contain' }} />
         </button>
 
-        {/* Nav items */}
         {NAV.map(({ id, icon, label, path }) => {
           const isActive = activeNav === id
           return (
@@ -283,7 +306,6 @@ export default function AppShell() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Logout */}
         <button
           onClick={handleLogout}
           title="Logout"
@@ -303,7 +325,6 @@ export default function AppShell() {
 
       {/* Conversation list panel */}
       <div className={`conversation-panel ${isChatListRoute ? 'mobile-visible' : 'mobile-hidden'}`}>
-        {/* Panel header */}
         <div className="panel-header">
           <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
             Chats
@@ -314,7 +335,6 @@ export default function AppShell() {
           </div>
         </div>
 
-        {/* Search */}
         <div style={{ padding: '10px 12px 8px', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
             <span
@@ -337,7 +357,6 @@ export default function AppShell() {
           </div>
         </div>
 
-        {/* Filter tabs */}
         <div style={{ display: 'flex', gap: '6px', padding: '0 12px 10px', flexShrink: 0 }}>
           {FILTER_TABS.map(tab => (
             <button
@@ -350,7 +369,6 @@ export default function AppShell() {
           ))}
         </div>
 
-        {/* Conversation list */}
         <div className="conversation-scroll" style={{ flex: 1, overflowY: 'auto' }}>
           {pinned.length > 0 && (
             <>
@@ -403,7 +421,7 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* Main content area */}
+      {/* Main content */}
       <div className={`chat-main ${isChatListRoute ? 'mobile-hidden' : 'mobile-visible'}`}>
         {location.pathname !== '/app/chats' ? (
           <Outlet />
@@ -467,7 +485,6 @@ export default function AppShell() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-/** Small notification badge */
 function Badge({ count, style }) {
   return (
     <span
@@ -490,18 +507,46 @@ function Badge({ count, style }) {
   )
 }
 
-/** Wrapper for popup toast cards */
-function PopupCard({ children, onClick }) {
+/** Popup toast card with bottom loading-line countdown */
+function PopupCard({ children, onClick, duration = 10000 }) {
+  const [progress, setProgress] = React.useState(100)
+
+  React.useEffect(() => {
+    const start = Date.now()
+    let raf
+    const tick = () => {
+      const elapsed = Date.now() - start
+      const pct = Math.max(0, 100 - (elapsed / duration) * 100)
+      setProgress(pct)
+      if (pct > 0) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [duration])
+
+  const barColor =
+    progress > 40 ? 'var(--primary)' :
+    progress > 15 ? '#f59e0b' :
+                    '#ef4444'
+
   return (
-    <div style={popupStyles.card} onClick={onClick}>
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', flex: 1 }}>
+    <div style={{ ...popupStyles.card, padding: '12px 12px 0' }} onClick={onClick}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', flex: 1, paddingBottom: '12px' }}>
         {children}
+      </div>
+      {/* Loading line */}
+      <div style={{ height: '3px', background: 'var(--border)', borderRadius: '0 0 16px 16px', overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${progress}%`,
+          background: barColor,
+          transition: 'background 0.5s ease',
+        }} />
       </div>
     </div>
   )
 }
 
-/** Icon pill inside popup toast */
 function PopupIcon({ icon }) {
   return (
     <div style={popupStyles.icon}>
@@ -510,7 +555,6 @@ function PopupIcon({ icon }) {
   )
 }
 
-/** Small icon-only button used in panel header */
 function IconBtn({ icon, title, onClick }) {
   return (
     <button
@@ -531,7 +575,6 @@ function IconBtn({ icon, title, onClick }) {
   )
 }
 
-/** Single conversation row */
 function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
   const otherUid = getOtherUid(convo)
   const isGroup  = convo.type === 'group'
@@ -563,7 +606,6 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
       onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-secondary)' }}
       onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
     >
-      {/* Avatar */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         {photo ? (
           <img src={photo} alt={name} style={{ width: '46px', height: '46px', borderRadius: '50%', objectFit: 'cover' }} />
@@ -587,7 +629,6 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
         )}
       </div>
 
-      {/* Text content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '2px' }}>
           <span style={{
@@ -648,9 +689,7 @@ function NewGroupModal({ user, onClose, onCreated }) {
   async function handleSearch(e) {
     const q = e.target.value
     setSearchQ(q)
-
     if (!q.trim()) { setResults([]); return }
-
     setSearching(true)
     try {
       const res = await searchByUsername(q.trim())
@@ -673,25 +712,17 @@ function NewGroupModal({ user, onClose, onCreated }) {
   async function handleCreate() {
     if (!groupName.trim()) return toast.error('Enter a group name')
     if (!selected.length)  return toast.error('Add at least one member')
-
     setCreating(true)
     try {
       const names  = { [user.uid]: user.displayName || '' }
       const photos = { [user.uid]: user.photoURL    || '' }
-
       selected.forEach(u => {
         names[u.uid]  = u.displayName || ''
         photos[u.uid] = u.photoURL    || ''
       })
-
       const convId = await createGroupConv(
-        user.uid,
-        groupName.trim(),
-        selected.map(u => u.uid),
-        names,
-        photos
+        user.uid, groupName.trim(), selected.map(u => u.uid), names, photos
       )
-
       onCreated(convId)
       toast.success('Group created!')
     } catch {
@@ -706,8 +737,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
-
-        {/* Header */}
         <div className="modal-header">
           <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
             New Group
@@ -717,10 +746,7 @@ function NewGroupModal({ user, onClose, onCreated }) {
           </button>
         </div>
 
-        {/* Body */}
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-          {/* Group name */}
           <div>
             <label className="field-label">Group Name</label>
             <input
@@ -735,7 +761,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
             />
           </div>
 
-          {/* Member search */}
           <div>
             <label className="field-label">Add Members</label>
             <input
@@ -749,7 +774,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
               onBlur={e  => (e.target.style.borderColor = 'var(--border)')}
             />
 
-            {/* Selected tags */}
             {selected.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
                 {selected.map(u => (
@@ -761,20 +785,17 @@ function NewGroupModal({ user, onClose, onCreated }) {
               </div>
             )}
 
-            {/* Results list */}
             <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {searching && (
                 <p style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '16px', fontSize: '13px', margin: 0 }}>
                   Searching...
                 </p>
               )}
-
               {!searching && searchQ.trim() && results.length === 0 && (
                 <p style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '16px', fontSize: '13px', margin: 0 }}>
                   No users found
                 </p>
               )}
-
               {results.map(u => {
                 const isSelected = !!selected.find(s => s.uid === u.uid)
                 const ac = getAvatarColor(u.displayName || u.username || '')
@@ -803,7 +824,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
                         </span>
                       )}
                     </div>
-
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
                         {u.displayName || 'Unknown'}
@@ -812,7 +832,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
                         @{u.username || u.uid?.slice(0, 8)}
                       </p>
                     </div>
-
                     {isSelected && (
                       <span className="material-icons" style={{ color: 'var(--primary)', fontSize: '20px' }}>
                         check_circle
@@ -824,7 +843,6 @@ function NewGroupModal({ user, onClose, onCreated }) {
             </div>
           </div>
 
-          {/* Create button */}
           <button
             onClick={handleCreate}
             disabled={isDisabled}
@@ -853,12 +871,11 @@ const popupStyles = {
     border: '1px solid var(--border)',
     background: 'var(--bg-primary)',
     boxShadow: '0 14px 40px rgba(0,0,0,0.18)',
-    padding: '12px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '10px',
     color: 'var(--text-primary)',
     cursor: 'pointer',
+    overflow: 'hidden',
   },
   icon: {
     width: '40px', height: '40px', borderRadius: '12px', flexShrink: 0,
@@ -887,7 +904,6 @@ const SHELL_CSS = `
     position: relative;
   }
 
-  /* Desktop sidebar */
   .desktop-sidebar {
     width: 64px;
     flex-shrink: 0;
@@ -935,7 +951,6 @@ const SHELL_CSS = `
     border-radius: 0 3px 3px 0;
   }
 
-  /* Conversation panel */
   .conversation-panel {
     width: 320px;
     flex-shrink: 0;
@@ -1002,7 +1017,6 @@ const SHELL_CSS = `
     color: var(--text-tertiary);
   }
 
-  /* Main content */
   .chat-main {
     flex: 1;
     display: flex;
@@ -1012,7 +1026,6 @@ const SHELL_CSS = `
     min-width: 0;
   }
 
-  /* Icon button */
   .icon-btn {
     width: 34px; height: 34px;
     border-radius: 9px; border: none;
@@ -1021,12 +1034,9 @@ const SHELL_CSS = `
     transition: all 0.15s;
   }
 
-  /* Mobile bottom nav — hidden on desktop */
   .mobile-bottom-nav { display: none; }
-
   .hide-mobile { display: flex; }
 
-  /* Utility */
   .field-label {
     display: block; font-size: 12px; font-weight: 600;
     margin-bottom: 6px; color: var(--text-secondary);
@@ -1052,7 +1062,6 @@ const SHELL_CSS = `
     color: var(--primary); font-size: 14px; line-height: 1; padding: 0;
   }
 
-  /* ── Mobile ──────────────────────────────────────────────── */
   @media (max-width: 900px) {
     .hide-mobile { display: none !important; }
 
