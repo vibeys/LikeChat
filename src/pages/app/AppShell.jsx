@@ -1,6 +1,7 @@
 // src/pages/app/AppShell.jsx
 import React, { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router'
+import { motion, AnimatePresence } from 'framer-motion'
 import { onSnapshot, collection, query, orderBy } from 'firebase/firestore'
 import { useAuth } from '../../context/AuthContext'
 import { watchConversations, createGroupConv, acceptGroupInvite } from '../../services/chatService'
@@ -11,19 +12,37 @@ import { searchByUsername } from '../../services/userService'
 import { deleteNotification, markNotificationRead } from '../../services/notificationService'
 import { db } from '../../lib/firebase'
 import toast from 'react-hot-toast'
+import {
+  ChatCircleDots,
+  Users,
+  Bell,
+  UserCircle,
+  SignOut,
+  UsersThree,
+  NotePencil,
+  MagnifyingGlass,
+  X,
+  CheckCircle,
+  UserPlus,
+  Heart,
+  At,
+  Megaphone,
+  Phone,
+  Video,
+} from '@phosphor-icons/react'
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const NAV = [
-  { id: 'chats',   icon: 'chat_bubble',    label: 'Chats',         path: '/app/chats' },
-  { id: 'friends', icon: 'people',         label: 'Friends',       path: '/app/friends' },
-  { id: 'notifs',  icon: 'notifications',  label: 'Notifications', path: '/app/notifications' },
-  { id: 'profile', icon: 'account_circle', label: 'Profile',       path: '/app/profile' },
+  { id: 'chats',   Icon: ChatCircleDots, label: 'Chats',         path: '/app/chats' },
+  { id: 'friends', Icon: Users,          label: 'Friends',       path: '/app/friends' },
+  { id: 'notifs',  Icon: Bell,           label: 'Notifications', path: '/app/notifications' },
+  { id: 'profile', Icon: UserCircle,     label: 'Profile',       path: '/app/profile' },
 ]
 
 const FILTER_TABS = ['all', 'unread', 'groups']
 
-// ─── AppShell ────────────────────────────────────────────────────────────────
+// ─── AppShell ─────────────────────────────────────────────────────────────────
 
 export default function AppShell() {
   const { user }   = useAuth()
@@ -37,65 +56,54 @@ export default function AppShell() {
   const [showNewGroup, setShowNewGroup] = useState(false)
   const [notifUnread,  setNotifUnread]  = useState(0)
 
-  const notifSeenRef  = useRef(new Set())
+  const notifSeenRef   = useRef(new Set())
   const notifBootedRef = useRef(false)
 
-  const isChatListRoute  = location.pathname === '/app/chats'
+  const isChatListRoute   = location.pathname === '/app/chats'
   const isChatThreadRoute = /^\/app\/chats\/[^/]+/.test(location.pathname)
-  const showMobileNav    = !isChatThreadRoute
-  const activeConvId     = location.pathname.match(/\/app\/chats\/(.+)/)?.[1]
+  const showMobileNav     = !isChatThreadRoute
+  const activeConvId      = location.pathname.match(/\/app\/chats\/(.+)/)?.[1]
 
   const activeNav = (() => {
-    if (location.pathname.startsWith('/app/friends'))      return 'friends'
+    if (location.pathname.startsWith('/app/friends'))       return 'friends'
     if (location.pathname.startsWith('/app/notifications')) return 'notifs'
-    if (location.pathname.startsWith('/app/profile'))      return 'profile'
+    if (location.pathname.startsWith('/app/profile'))       return 'profile'
     return 'chats'
   })()
 
-  // ── Watch conversations ────────────────────────────────────────────────────
+  // ── Watch conversations ───────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.uid) return
     return watchConversations(user.uid, setConvos)
   }, [user?.uid])
 
-  // ── Watch presence for all conversation partners ───────────────────────────
+  // ── Watch presence ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!convos.length || !user?.uid) return
-
     const uids = [
-      ...new Set(
-        convos.flatMap(c => c.members ?? []).filter(uid => uid !== user.uid)
-      ),
+      ...new Set(convos.flatMap(c => c.members ?? []).filter(uid => uid !== user.uid)),
     ]
-
     const unsubs = uids.map(uid =>
-      watchUserPresence(uid, data =>
-        setPresence(prev => ({ ...prev, [uid]: data }))
-      )
+      watchUserPresence(uid, data => setPresence(prev => ({ ...prev, [uid]: data })))
     )
-
     return () => unsubs.forEach(fn => fn())
   }, [convos, user?.uid])
 
-  // ── Watch notifications (badge + popup toasts) ─────────────────────────────
+  // ── Watch notifications ────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.uid) return
-
     const q = query(
       collection(db, 'notifications', user.uid, 'items'),
       orderBy('createdAt', 'desc')
     )
-
     const unsub = onSnapshot(q, snap => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       setNotifUnread(items.filter(n => !n.read).length)
-
       if (!notifBootedRef.current) {
         items.forEach(n => notifSeenRef.current.add(n.id))
         notifBootedRef.current = true
         return
       }
-
       snap.docChanges().forEach(change => {
         if (change.type !== 'added') return
         const notif = { id: change.doc.id, ...change.doc.data() }
@@ -103,14 +111,12 @@ export default function AppShell() {
         notifSeenRef.current.add(notif.id)
         if (!notif.read) showPopupNotif(notif)
       })
-
       items.forEach(n => notifSeenRef.current.add(n.id))
     })
-
     return () => unsub()
   }, [user?.uid])
 
-  // ── Popup notification toast ───────────────────────────────────────────────
+  // ── Popup notification toast ──────────────────────────────────────────────
   function showPopupNotif(notif) {
     const name = notif.fromName || 'Someone'
 
@@ -118,7 +124,7 @@ export default function AppShell() {
       toast.custom(
         t => (
           <PopupCard duration={10000}>
-            <PopupIcon icon="group" />
+            <PopupIconBox type="group" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={popupStyles.title}>
                 {notif.title || `${name} invited you to a group`}
@@ -168,22 +174,9 @@ export default function AppShell() {
         case 'media':           return `${name} sent you a media message.`
         case 'mention':         return notif.text ? `${name} mentioned you: "${notif.text}"` : `${name} mentioned you in a chat.`
         case 'announce':        return notif.text || `New announcement in ${notif.groupName || 'a group'}.`
-        case 'call':            return notif.text || (notif.data?.callType === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call')
-        case 'missed_call':     return notif.text || (notif.data?.callType === 'video' ? '📹 Missed video call' : '📞 Missed audio call')
+        case 'call':            return notif.text || (notif.data?.callType === 'video' ? 'Incoming video call' : 'Incoming audio call')
+        case 'missed_call':     return notif.text || (notif.data?.callType === 'video' ? 'Missed video call' : 'Missed audio call')
         default:                return notif.text || `${name} sent you a message.`
-      }
-    })()
-
-    const popupIcon = (() => {
-      switch (notif.type) {
-        case 'friend_request':
-        case 'friend_accepted': return 'person_add'
-        case 'reaction':        return 'favorite'
-        case 'mention':         return 'alternate_email'
-        case 'announce':        return 'campaign'
-        case 'call':
-        case 'missed_call':     return notif.data?.callType === 'video' ? 'videocam' : 'call'
-        default:                return 'notifications'
       }
     })()
 
@@ -212,7 +205,7 @@ export default function AppShell() {
     toast.custom(
       t => (
         <PopupCard onClick={handleOpen} duration={dur}>
-          <PopupIcon icon={popupIcon} />
+          <PopupIconBox type={notif.type} callType={notif.data?.callType} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={popupStyles.title}>{notif.title || name}</div>
             <div style={popupStyles.body}>{body}</div>
@@ -233,12 +226,8 @@ export default function AppShell() {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   async function handleLogout() {
-    try {
-      await logout()
-      navigate('/login')
-    } catch {
-      toast.error('Failed to logout')
-    }
+    try { await logout(); navigate('/login') }
+    catch { toast.error('Failed to logout') }
   }
 
   function getOtherUid(convo) {
@@ -262,91 +251,83 @@ export default function AppShell() {
     <div className="app-shell" style={{ background: 'var(--bg-secondary)' }}>
       <style>{SHELL_CSS}</style>
 
-      {/* Desktop sidebar */}
+      {/* ── Desktop sidebar ─────────────────────────────────────────────── */}
       <aside className="desktop-sidebar hide-mobile">
-        <button
+        <motion.button
           onClick={() => navigate('/app/chats')}
           title="LikeChat"
           className="logo-btn"
-          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08) rotate(-4deg)' }}
-          onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
+          whileHover={{ scale: 1.1, rotate: -5 }}
+          whileTap={{ scale: 0.93 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
         >
           <img src="/logo.png" alt="LikeChat" style={{ width: '24px', height: '24px', objectFit: 'contain' }} />
-        </button>
+        </motion.button>
 
-        {NAV.map(({ id, icon, label, path }) => {
+        {NAV.map(({ id, Icon, label, path }) => {
           const isActive = activeNav === id
           return (
-            <button
+            <motion.button
               key={id}
               onClick={() => navigate(path)}
               title={label}
               className={`nav-btn ${isActive ? 'nav-btn--active' : ''}`}
-              onMouseEnter={e => {
-                if (!isActive) {
-                  e.currentTarget.style.background = 'var(--bg-secondary)'
-                  e.currentTarget.style.color = 'var(--text-primary)'
-                }
-              }}
-              onMouseLeave={e => {
-                if (!isActive) {
-                  e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = 'var(--text-tertiary)'
-                }
-              }}
+              whileHover={{ scale: 1.08, y: -1 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 20 }}
             >
-              {isActive && <span className="nav-active-bar" />}
-              <span className="material-icons" style={{ fontSize: '22px' }}>{icon}</span>
+              {isActive && (
+                <motion.span
+                  className="nav-active-bar"
+                  layoutId="sidebar-active-bar"
+                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                />
+              )}
+              <Icon size={22} weight={isActive ? 'fill' : 'regular'} />
               {id === 'notifs' && notifUnread > 0 && (
                 <Badge count={notifUnread} />
               )}
-            </button>
+            </motion.button>
           )
         })}
 
         <div style={{ flex: 1 }} />
 
-        <button
+        <motion.button
           onClick={handleLogout}
           title="Logout"
           className="nav-btn logout-btn"
-          onMouseEnter={e => {
-            e.currentTarget.style.background = 'var(--bg-secondary)'
-            e.currentTarget.style.color = 'var(--danger)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.background = 'transparent'
-            e.currentTarget.style.color = 'var(--text-tertiary)'
-          }}
+          whileHover={{ scale: 1.08, y: -1, color: 'var(--danger)' }}
+          whileTap={{ scale: 0.9 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
         >
-          <span className="material-icons" style={{ fontSize: '22px' }}>logout</span>
-        </button>
+          <SignOut size={22} />
+        </motion.button>
       </aside>
 
-      {/* Conversation list panel */}
+      {/* ── Conversation list panel ─────────────────────────────────────── */}
       <div className={`conversation-panel ${isChatListRoute ? 'mobile-visible' : 'mobile-hidden'}`}>
         <div className="panel-header">
           <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
             Chats
           </h1>
           <div style={{ display: 'flex', gap: '6px' }}>
-            <IconBtn icon="group_add" title="New group" onClick={() => setShowNewGroup(true)} />
-            <IconBtn icon="edit"      title="New chat"  onClick={() => navigate('/app/friends')} />
+            <IconBtn Icon={UsersThree} title="New group" onClick={() => setShowNewGroup(true)} />
+            <IconBtn Icon={NotePencil} title="New chat"  onClick={() => navigate('/app/friends')} />
           </div>
         </div>
 
+        {/* Search */}
         <div style={{ padding: '10px 12px 8px', flexShrink: 0 }}>
           <div style={{ position: 'relative' }}>
-            <span
-              className="material-icons"
+            <MagnifyingGlass
+              size={17}
               style={{
-                position: 'absolute', left: '10px', top: '50%',
+                position: 'absolute', left: '11px', top: '50%',
                 transform: 'translateY(-50%)',
-                color: 'var(--text-tertiary)', fontSize: '18px', pointerEvents: 'none',
+                color: 'var(--text-tertiary)', pointerEvents: 'none',
               }}
-            >
-              search
-            </span>
+            />
             <input
               type="text"
               placeholder="Search..."
@@ -357,18 +338,21 @@ export default function AppShell() {
           </div>
         </div>
 
+        {/* Filter tabs */}
         <div style={{ display: 'flex', gap: '6px', padding: '0 12px 10px', flexShrink: 0 }}>
           {FILTER_TABS.map(tab => (
-            <button
+            <motion.button
               key={tab}
               onClick={() => setFilter(tab)}
               className={`filter-tab ${filter === tab ? 'filter-tab--active' : ''}`}
+              whileTap={{ scale: 0.95 }}
             >
               {tab}
-            </button>
+            </motion.button>
           ))}
         </div>
 
+        {/* Conversation list */}
         <div className="conversation-scroll" style={{ flex: 1, overflowY: 'auto' }}>
           {pinned.length > 0 && (
             <>
@@ -390,19 +374,19 @@ export default function AppShell() {
 
           {rest.length === 0 && pinned.length === 0 ? (
             <div className="empty-convos">
-              <span className="material-icons" style={{ fontSize: '48px', opacity: 0.3 }}>
-                chat_bubble_outline
-              </span>
+              <ChatCircleDots size={48} style={{ opacity: 0.25 }} />
               <p style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}>
                 {search ? 'No conversations found' : 'No conversations yet'}
               </p>
               {!search && (
-                <button
+                <motion.button
                   onClick={() => navigate('/app/friends')}
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.96 }}
                   style={{ color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
                 >
                   Start a new chat →
-                </button>
+                </motion.button>
               )}
             </div>
           ) : (
@@ -421,7 +405,7 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* Main content */}
+      {/* ── Main content ─────────────────────────────────────────────────── */}
       <div className={`chat-main ${isChatListRoute ? 'mobile-hidden' : 'mobile-visible'}`}>
         {location.pathname !== '/app/chats' ? (
           <Outlet />
@@ -434,9 +418,12 @@ export default function AppShell() {
               gap: '16px', color: 'var(--text-tertiary)',
             }}
           >
-            <span className="material-icons" style={{ fontSize: '80px', opacity: 0.15 }}>
-              mark_unread_chat_alt
-            </span>
+            <motion.div
+              animate={{ y: [0, -8, 0] }}
+              transition={{ repeat: Infinity, duration: 3.5, ease: 'easeInOut' }}
+            >
+              <ChatCircleDots size={80} style={{ opacity: 0.12 }} />
+            </motion.div>
             <p style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Select a conversation
             </p>
@@ -447,38 +434,42 @@ export default function AppShell() {
         )}
       </div>
 
-      {/* Mobile bottom nav */}
+      {/* ── Mobile bottom nav ────────────────────────────────────────────── */}
       {showMobileNav && (
         <nav className="mobile-bottom-nav">
-          {NAV.map(({ id, icon, path }) => {
+          {NAV.map(({ id, Icon, path }) => {
             const isActive = activeNav === id
             return (
-              <button
+              <motion.button
                 key={id}
                 onClick={() => navigate(path)}
                 className={`mobile-nav-btn ${isActive ? 'mobile-nav-btn--active' : ''}`}
+                whileTap={{ scale: 0.88 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
               >
-                <span className="material-icons" style={{ fontSize: '24px' }}>{icon}</span>
+                <Icon size={24} weight={isActive ? 'fill' : 'regular'} />
                 {id === 'notifs' && notifUnread > 0 && (
                   <Badge count={notifUnread} style={{ top: '8px', right: '18px' }} />
                 )}
-              </button>
+              </motion.button>
             )
           })}
         </nav>
       )}
 
-      {/* New group modal */}
-      {showNewGroup && (
-        <NewGroupModal
-          user={user}
-          onClose={() => setShowNewGroup(false)}
-          onCreated={convId => {
-            setShowNewGroup(false)
-            navigate(`/app/chats/${convId}`)
-          }}
-        />
-      )}
+      {/* ── New group modal ──────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showNewGroup && (
+          <NewGroupModal
+            user={user}
+            onClose={() => setShowNewGroup(false)}
+            onCreated={convId => {
+              setShowNewGroup(false)
+              navigate(`/app/chats/${convId}`)
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -487,7 +478,10 @@ export default function AppShell() {
 
 function Badge({ count, style }) {
   return (
-    <span
+    <motion.span
+      initial={{ scale: 0 }}
+      animate={{ scale: 1 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 20 }}
       style={{
         position: 'absolute',
         top: '6px', right: '6px',
@@ -503,11 +497,10 @@ function Badge({ count, style }) {
       }}
     >
       {count > 9 ? '9+' : count}
-    </span>
+    </motion.span>
   )
 }
 
-/** Popup toast card with bottom loading-line countdown */
 function PopupCard({ children, onClick, duration = 10000 }) {
   const [progress, setProgress] = React.useState(100)
 
@@ -530,11 +523,17 @@ function PopupCard({ children, onClick, duration = 10000 }) {
                     '#ef4444'
 
   return (
-    <div style={{ ...popupStyles.card, padding: '12px 12px 0' }} onClick={onClick}>
+    <motion.div
+      initial={{ opacity: 0, y: -12, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.96 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+      style={{ ...popupStyles.card, padding: '12px 12px 0' }}
+      onClick={onClick}
+    >
       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', flex: 1, paddingBottom: '12px' }}>
         {children}
       </div>
-      {/* Loading line */}
       <div style={{ height: '3px', background: 'var(--border)', borderRadius: '0 0 16px 16px', overflow: 'hidden' }}>
         <div style={{
           height: '100%',
@@ -543,35 +542,40 @@ function PopupCard({ children, onClick, duration = 10000 }) {
           transition: 'background 0.5s ease',
         }} />
       </div>
-    </div>
+    </motion.div>
   )
 }
 
-function PopupIcon({ icon }) {
+function PopupIconBox({ type, callType }) {
+  const iconMap = {
+    group:           <UsersThree size={20} />,
+    friend_request:  <UserPlus   size={20} />,
+    friend_accepted: <UserPlus   size={20} />,
+    reaction:        <Heart      size={20} />,
+    mention:         <At         size={20} />,
+    announce:        <Megaphone  size={20} />,
+    call:            callType === 'video' ? <Video size={20} /> : <Phone size={20} />,
+    missed_call:     callType === 'video' ? <Video size={20} /> : <Phone size={20} />,
+  }
   return (
     <div style={popupStyles.icon}>
-      <span className="material-icons" style={{ fontSize: '20px' }}>{icon}</span>
+      {iconMap[type] || <Bell size={20} />}
     </div>
   )
 }
 
-function IconBtn({ icon, title, onClick }) {
+function IconBtn({ Icon, title, onClick }) {
   return (
-    <button
+    <motion.button
       onClick={onClick}
       title={title}
       className="icon-btn"
-      onMouseEnter={e => {
-        e.currentTarget.style.background = 'var(--bg-secondary)'
-        e.currentTarget.style.color = 'var(--primary)'
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.background = 'transparent'
-        e.currentTarget.style.color = 'var(--text-tertiary)'
-      }}
+      whileHover={{ scale: 1.1, y: -1 }}
+      whileTap={{ scale: 0.9 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
     >
-      <span className="material-icons" style={{ fontSize: '20px' }}>{icon}</span>
-    </button>
+      <Icon size={20} />
+    </motion.button>
   )
 }
 
@@ -588,24 +592,29 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
   function getPreview() {
     if (!lastMsg?.text && !lastMsg?.type) return 'No messages yet'
     if (lastMsg.unsent) return 'Message unsent'
-    if (lastMsg.type === 'image') return '📷 Photo'
-    if (lastMsg.type === 'video') return '🎥 Video'
-    if (lastMsg.type === 'file')  return '📎 File'
+    if (lastMsg.type === 'image') return 'Photo'
+    if (lastMsg.type === 'video') return 'Video'
+    if (lastMsg.type === 'file')  return 'File'
     return lastMsg.text || 'No messages yet'
   }
 
   return (
-    <button
+    <motion.button
       onClick={onClick}
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
         padding: '9px 14px', border: 'none', textAlign: 'left', cursor: 'pointer',
         background: isActive ? 'var(--primary-light)' : 'transparent',
-        transition: 'background 0.1s', position: 'relative',
+        position: 'relative',
       }}
-      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-secondary)' }}
-      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+      whileHover={{
+        backgroundColor: isActive ? 'var(--primary-light)' : 'var(--bg-secondary)',
+        x: 2,
+      }}
+      whileTap={{ scale: 0.99 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
     >
+      {/* Avatar */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         {photo ? (
           <img src={photo} alt={name} style={{ width: '46px', height: '46px', borderRadius: '50%', objectFit: 'cover' }} />
@@ -629,6 +638,7 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
         )}
       </div>
 
+      {/* Text */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '2px' }}>
           <span style={{
@@ -660,19 +670,24 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
             {getPreview()}
           </span>
           {unread > 0 && (
-            <span style={{
-              minWidth: '19px', height: '19px', borderRadius: '10px',
-              background: 'var(--primary)', color: '#fff',
-              fontSize: '11px', fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: '0 5px', flexShrink: 0, marginLeft: '6px',
-            }}>
+            <motion.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 20 }}
+              style={{
+                minWidth: '19px', height: '19px', borderRadius: '10px',
+                background: 'var(--primary)', color: '#fff',
+                fontSize: '11px', fontWeight: 700,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '0 5px', flexShrink: 0, marginLeft: '6px',
+              }}
+            >
               {unread > 9 ? '9+' : unread}
-            </span>
+            </motion.span>
           )}
         </div>
       </div>
-    </button>
+    </motion.button>
   )
 }
 
@@ -735,15 +750,35 @@ function NewGroupModal({ user, onClose, onCreated }) {
   const isDisabled = creating || !groupName.trim() || selected.length === 0
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()}>
+    <motion.div
+      className="modal-overlay"
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.18 }}
+    >
+      <motion.div
+        className="modal-content"
+        onClick={e => e.stopPropagation()}
+        initial={{ y: 40, opacity: 0, scale: 0.97 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 30, opacity: 0, scale: 0.97 }}
+        transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+      >
         <div className="modal-header">
           <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
             New Group
           </h3>
-          <button onClick={onClose} className="modal-close">
-            <span className="material-icons">close</span>
-          </button>
+          <motion.button
+            onClick={onClose}
+            className="modal-close"
+            whileHover={{ rotate: 90, scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+          >
+            <X size={16} />
+          </motion.button>
         </div>
 
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -774,16 +809,32 @@ function NewGroupModal({ user, onClose, onCreated }) {
               onBlur={e  => (e.target.style.borderColor = 'var(--border)')}
             />
 
-            {selected.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-                {selected.map(u => (
-                  <span key={u.uid} className="member-tag">
-                    {u.displayName || u.username || 'Member'}
-                    <button onClick={() => toggle(u)} className="member-tag-remove">×</button>
-                  </span>
-                ))}
-              </div>
-            )}
+            <AnimatePresence>
+              {selected.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px', overflow: 'hidden' }}
+                >
+                  {selected.map(u => (
+                    <motion.span
+                      key={u.uid}
+                      className="member-tag"
+                      initial={{ scale: 0, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0, opacity: 0 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                    >
+                      {u.displayName || u.username || 'Member'}
+                      <button onClick={() => toggle(u)} className="member-tag-remove">
+                        <X size={12} />
+                      </button>
+                    </motion.span>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {searching && (
@@ -800,15 +851,17 @@ function NewGroupModal({ user, onClose, onCreated }) {
                 const isSelected = !!selected.find(s => s.uid === u.uid)
                 const ac = getAvatarColor(u.displayName || u.username || '')
                 return (
-                  <button
+                  <motion.button
                     key={u.uid}
                     onClick={() => toggle(u)}
+                    whileHover={{ x: 2 }}
+                    whileTap={{ scale: 0.98 }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '10px',
                       padding: '8px 10px', borderRadius: '10px',
                       border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
                       background: isSelected ? 'var(--primary-light)' : 'var(--bg-secondary)',
-                      cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
+                      cursor: 'pointer', textAlign: 'left', transition: 'border-color 0.15s, background 0.15s',
                     }}
                   >
                     <div style={{
@@ -832,20 +885,30 @@ function NewGroupModal({ user, onClose, onCreated }) {
                         @{u.username || u.uid?.slice(0, 8)}
                       </p>
                     </div>
-                    {isSelected && (
-                      <span className="material-icons" style={{ color: 'var(--primary)', fontSize: '20px' }}>
-                        check_circle
-                      </span>
-                    )}
-                  </button>
+                    <AnimatePresence>
+                      {isSelected && (
+                        <motion.div
+                          initial={{ scale: 0, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ scale: 0, opacity: 0 }}
+                          transition={{ type: 'spring', stiffness: 500, damping: 20 }}
+                        >
+                          <CheckCircle size={20} weight="fill" style={{ color: 'var(--primary)' }} />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.button>
                 )
               })}
             </div>
           </div>
 
-          <button
+          <motion.button
             onClick={handleCreate}
             disabled={isDisabled}
+            whileHover={!isDisabled ? { scale: 1.02, y: -1 } : {}}
+            whileTap={!isDisabled ? { scale: 0.97 } : {}}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
             style={{
               width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
               background: isDisabled ? 'var(--border)' : 'var(--primary)',
@@ -855,10 +918,10 @@ function NewGroupModal({ user, onClose, onCreated }) {
             }}
           >
             {creating ? 'Creating...' : `Create Group (${selected.length + 1} members)`}
-          </button>
+          </motion.button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -870,7 +933,7 @@ const popupStyles = {
     borderRadius: '16px',
     border: '1px solid var(--border)',
     background: 'var(--bg-primary)',
-    boxShadow: '0 14px 40px rgba(0,0,0,0.18)',
+    boxShadow: '0 14px 40px rgba(0,0,0,0.22)',
     display: 'flex',
     flexDirection: 'column',
     color: 'var(--text-primary)',
@@ -924,7 +987,7 @@ const SHELL_CSS = `
     display: flex; align-items: center; justify-content: center;
     margin-bottom: 12px;
     color: #fff;
-    transition: transform 0.2s;
+    box-shadow: 0 4px 14px rgba(30,144,255,0.3);
   }
 
   .nav-btn {
@@ -935,7 +998,7 @@ const SHELL_CSS = `
     color: var(--text-tertiary);
     display: flex; align-items: center; justify-content: center;
     position: relative;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background 0.15s ease;
   }
 
   .nav-btn--active {
@@ -949,6 +1012,7 @@ const SHELL_CSS = `
     width: 3px;
     background: var(--primary);
     border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px rgba(30,144,255,0.5);
   }
 
   .conversation-panel {
@@ -980,10 +1044,13 @@ const SHELL_CSS = `
     color: var(--text-primary);
     font-size: 13px;
     outline: none;
-    transition: border-color 0.15s;
+    transition: border-color 0.18s, box-shadow 0.18s;
     box-sizing: border-box;
   }
-  .search-input:focus { border-color: var(--primary); }
+  .search-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30,144,255,0.1);
+  }
 
   .filter-tab {
     padding: 5px 12px;
@@ -1031,7 +1098,11 @@ const SHELL_CSS = `
     border-radius: 9px; border: none;
     background: transparent; color: var(--text-tertiary);
     cursor: pointer; display: flex; align-items: center; justify-content: center;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s;
+  }
+  .icon-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--primary);
   }
 
   .mobile-bottom-nav { display: none; }
@@ -1048,6 +1119,11 @@ const SHELL_CSS = `
     background: var(--bg-secondary); color: var(--text-primary);
     font-size: 14px; outline: none;
     box-sizing: border-box;
+    transition: border-color 0.18s, box-shadow 0.18s;
+  }
+  .field-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30,144,255,0.1);
   }
 
   .member-tag {
@@ -1059,8 +1135,10 @@ const SHELL_CSS = `
 
   .member-tag-remove {
     background: none; border: none; cursor: pointer;
-    color: var(--primary); font-size: 14px; line-height: 1; padding: 0;
+    color: var(--primary); display: flex; align-items: center; justify-content: center;
+    padding: 0; opacity: 0.7; transition: opacity 0.15s;
   }
+  .member-tag-remove:hover { opacity: 1; }
 
   @media (max-width: 900px) {
     .hide-mobile { display: none !important; }

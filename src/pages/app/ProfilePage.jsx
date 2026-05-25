@@ -1,435 +1,449 @@
-import { useEffect, useMemo, useState } from 'react'
+// src/pages/app/ProfilePage.jsx
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../../context/AuthContext'
+import { updateProfile, uploadProfilePhoto } from '../../services/userService'
+import { logout, deleteAccount } from '../../services/authService'
+import { getInitials, getAvatarColor } from '../../lib/utils'
 import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  updateDoc,
-  writeBatch,
-  getDoc,
-} from 'firebase/firestore'
-import { db } from '../../lib/firebase'
-import { acceptGroupInvite } from '../../services/chatService'
-import { formatDate, formatTime, getAvatarColor, getInitials, safeUserDisplayName } from '../../lib/utils'
-import { Spinner } from '../../components/UI'
-import {
-  ArrowLeft,
-  AtSign,
-  Bell,
-  Check,
-  CheckCheck,
-  Heart,
-  Image,
-  MessageCircle,
-  Megaphone,
-  Phone,
-  PhoneMissed,
-  Trash2,
-  UserPlus,
-  UserCheck,
-  Users,
-  Video,
+  Camera,
+  PencilSimple,
+  SignOut,
+  Trash,
+  User,
+  At,
+  FileText,
+  EnvelopeSimple,
+  ShieldCheck,
   X,
-} from 'lucide-react'
+  Check,
+  Warning,
+  Moon,
+  Sun,
+} from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
-function toDateValue(notif) {
-  const ts = notif?.createdAt
-  if (ts?.toDate) return ts.toDate()
-  if (typeof notif?.createdAtMs === 'number') return new Date(notif.createdAtMs)
-  return new Date(0)
-}
-
-function sortNotifs(items) {
-  return [...items].sort((a, b) => {
-    const ta = a?.createdAtMs || a?.createdAt?.toMillis?.() || 0
-    const tb = b?.createdAtMs || b?.createdAt?.toMillis?.() || 0
-    return tb - ta
-  })
-}
-
-export default function NotificationsPage() {
-  const { user } = useAuth()
+export default function ProfilePage() {
+  const { user, refreshUser } = useAuth()
   const navigate = useNavigate()
 
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('all')
-  const [notifs, setNotifs] = useState([])
-  const [deletingId, setDeletingId] = useState(null)
-
-  useEffect(() => {
-    if (!user?.uid) return
-
-    const q = query(collection(db, 'notifications', user.uid, 'items'))
-
-    const unsub = onSnapshot(
-      q,
-      snap => {
-        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        setNotifs(sortNotifs(items))
-        setLoading(false)
-      },
-      err => {
-        console.error('Notification snapshot error:', err)
-        setLoading(false)
-      }
-    )
-
-    return () => unsub()
-  }, [user?.uid])
-
-  const unreadCount = useMemo(() => notifs.filter(n => !n.read).length, [notifs])
-
-  const filtered = useMemo(() => {
-    if (filter === 'unread') return notifs.filter(n => !n.read)
-    return notifs
-  }, [filter, notifs])
-
-  const grouped = useMemo(() => {
-    const map = new Map()
-
-    for (const item of filtered) {
-      const label = formatDate(toDateValue(item))
-      if (!map.has(label)) map.set(label, [])
-      map.get(label).push(item)
-    }
-
-    return Array.from(map.entries())
-  }, [filtered])
-
-  async function markRead(notifId) {
-    try {
-      await updateDoc(doc(db, 'notifications', user.uid, 'items', notifId), {
-        read: true,
-      })
-    } catch {
-      toast.error('Failed to mark as read')
-    }
-  }
-
-  async function markAllRead() {
-    const unread = notifs.filter(n => !n.read)
-    if (!unread.length) return
-
-    try {
-      const batch = writeBatch(db)
-      unread.forEach(n => {
-        batch.update(doc(db, 'notifications', user.uid, 'items', n.id), {
-          read: true,
-        })
-      })
-      await batch.commit()
-      toast.success('All marked as read')
-    } catch {
-      toast.error('Failed to mark all as read')
-    }
-  }
-
-  async function deleteNotif(notifId) {
-    setDeletingId(notifId)
-    await new Promise(r => setTimeout(r, 200))
-    try {
-      await deleteDoc(doc(db, 'notifications', user.uid, 'items', notifId))
-      setDeletingId(null)
-    } catch (err) {
-      console.error('Failed to delete notification:', err)
-      setDeletingId(null)
-      toast.error('Failed to delete notification')
-    }
-  }
-
-  async function openNotif(notif) {
-    if (notif.type === 'group_invite') return
-
-    if (!notif.read) await markRead(notif.id)
-
-    // All chat-related types navigate to the conversation
-    if (['message', 'media', 'reaction', 'mention', 'announce', 'call', 'missed_call'].includes(notif.type)) {
-      if (notif.convId) navigate(`/app/chats/${notif.convId}`)
-      else navigate('/app/notifications')
-      return
-    }
-
-    // Friend-related types go to the friends page
-    if (['friend_request', 'friend_accepted'].includes(notif.type)) {
-      navigate('/app/friends')
-      return
-    }
-
-    // Fallback
-    navigate('/app/notifications')
-  }
-
-  return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <button onClick={() => navigate('/app/chats')} style={styles.backBtn} title="Back">
-          <ArrowLeft size={18} />
-        </button>
-
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={styles.headerTitle}>Notifications</h1>
-          <p style={styles.subtitle}>Updates, messages, and invitations</p>
-        </div>
-
-        {unreadCount > 0 && (
-          <button onClick={markAllRead} style={styles.secondaryBtn}>
-            <CheckCheck size={16} />
-            Mark all read
-          </button>
-        )}
-      </div>
-
-      <div style={styles.tabs}>
-        <TabButton active={filter === 'unread'} onClick={() => setFilter('unread')}>
-          Unread {unreadCount > 0 ? `(${unreadCount})` : ''}
-        </TabButton>
-        <TabButton active={filter === 'all'} onClick={() => setFilter('all')}>
-          All
-        </TabButton>
-      </div>
-
-      <div style={styles.content}>
-        {loading ? (
-          <div style={styles.center}>
-            <Spinner />
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            title={filter === 'unread' ? 'All caught up!' : 'No notifications yet'}
-            text={
-              filter === 'unread'
-                ? 'You have no unread notifications.'
-                : 'Messages, requests, and invites will appear here.'
-            }
-          />
-        ) : (
-          grouped.map(([dateLabel, items]) => (
-            <div key={dateLabel} style={styles.section}>
-              <div style={styles.dateLabel}>{dateLabel}</div>
-              <div style={styles.list}>
-                {items.map((notif, idx) => (
-                  <NotifItem
-                    key={notif.id}
-                    notif={notif}
-                    user={user}
-                    onOpen={() => openNotif(notif)}
-                    onMarkRead={() => markRead(notif.id)}
-                    onDelete={() => deleteNotif(notif.id)}
-                    isDeleting={deletingId === notif.id}
-                    style={{ animationDelay: `${idx * 0.04}s` }}
-                  />
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+  const [editModal,   setEditModal]   = useState(null) // 'name' | 'bio' | 'delete'
+  const [editValue,   setEditValue]   = useState('')
+  const [saving,      setSaving]      = useState(false)
+  const [photoLoading,setPhotoLoading]= useState(false)
+  const [darkMode,    setDarkMode]    = useState(
+    () => document.documentElement.getAttribute('data-theme') !== 'light'
   )
-}
+  const fileRef = useRef(null)
 
-function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, style }) {
-  const navigate = useNavigate()
-  const [accepting, setAccepting] = useState(false)
-  const [senderExists, setSenderExists] = useState(true)
+  const ac = getAvatarColor(user?.displayName || '')
 
-  // Check if sender account still exists
-  useEffect(() => {
-    if (!notif.fromUid) {
-      setSenderExists(false)
-      return
-    }
-    getDoc(doc(db, 'users', notif.fromUid))
-      .then(snap => setSenderExists(snap.exists()))
-      .catch(() => setSenderExists(false))
-  }, [notif.fromUid])
+  // ── Photo upload ──────────────────────────────────────────────────────────
+  async function handlePhotoChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) return toast.error('Please select an image file')
+    if (file.size > 5 * 1024 * 1024) return toast.error('Image must be under 5MB')
 
-  const name = safeUserDisplayName({ displayName: notif.fromName }, !senderExists)
-  const ac = getAvatarColor(notif.fromName || 'unknown')
-
-  function getIcon() {
-    const isVideo = notif.data?.callType === 'video'
-    switch (notif.type) {
-      case 'message':         return <MessageCircle size={14} />
-      case 'media':           return <Image size={14} />
-      case 'reaction':        return <Heart size={14} />
-      case 'friend_request':  return <UserPlus size={14} />
-      case 'friend_accepted': return <UserCheck size={14} />
-      case 'group_invite':    return <Users size={14} />
-      case 'announce':        return <Megaphone size={14} />
-      case 'mention':         return <AtSign size={14} />
-      case 'call':            return isVideo ? <Video size={14} /> : <Phone size={14} />
-      case 'missed_call':     return <PhoneMissed size={14} />
-      default:                return <Bell size={14} />
-    }
-  }
-
-  function getTitle() {
-    const isVideo = notif.data?.callType === 'video'
-    switch (notif.type) {
-      case 'message':         return `${name} sent you a message`
-      case 'media':           return `${name} sent media`
-      case 'reaction':        return `${name} reacted ${notif.emoji ? notif.emoji + ' ' : ''}to your message`
-      case 'friend_request':  return `${name} sent you a friend request`
-      case 'friend_accepted': return `${name} accepted your friend request`
-      case 'group_invite':    return `${name} invited you to a group`
-      case 'announce':        return `📢 Announcement in ${notif.groupName || 'a group'}`
-      case 'mention':         return `${name} mentioned you`
-      case 'call':            return isVideo ? `📹 Incoming video call from ${name}` : `📞 Incoming call from ${name}`
-      case 'missed_call':     return isVideo ? `📹 Missed video call from ${name}` : `📞 Missed call from ${name}`
-      default:                return notif.title || 'New notification'
-    }
-  }
-
-  function getBody() {
-    if (notif.type === 'group_invite') {
-      return notif.text || `Join "${notif.groupName || 'this group'}"`
-    }
-    return notif.text || ''
-  }
-
-  async function handleJoinInvite(e) {
-    e.stopPropagation()
-    if (!notif.convId) return
-
-    setAccepting(true)
+    setPhotoLoading(true)
     try {
-      await acceptGroupInvite(notif.convId, user.uid)
-      await deleteDoc(doc(db, 'notifications', user.uid, 'items', notif.id))
-      toast.success('Joined group')
-      navigate(`/app/chats/${notif.convId}`)
+      await uploadProfilePhoto(user.uid, file)
+      await refreshUser()
+      toast.success('Photo updated!')
     } catch (err) {
-      const msg =
-        err?.code === 'permission-denied' || /permissions/i.test(err?.message || '')
-          ? 'Firestore blocked the join. Update your rules for pending members.'
-          : (err?.message || 'Failed to join group')
-      toast.error(msg)
+      toast.error(err.message || 'Failed to update photo')
     } finally {
-      setAccepting(false)
+      setPhotoLoading(false)
+      e.target.value = ''
     }
   }
 
-  async function handleDismissInvite(e) {
-    e.stopPropagation()
-    await onDelete()
+  // ── Edit field ────────────────────────────────────────────────────────────
+  function openEdit(field) {
+    setEditValue(field === 'name' ? (user?.displayName || '') : (user?.bio || ''))
+    setEditModal(field)
+  }
+
+  async function handleSave() {
+    const trimmed = editValue.trim()
+    if (editModal === 'name' && !trimmed) return toast.error('Name cannot be empty')
+    setSaving(true)
+    try {
+      const data = editModal === 'name'
+        ? { displayName: trimmed }
+        : { bio: trimmed }
+      await updateProfile(user.uid, data)
+      await refreshUser()
+      toast.success('Profile updated!')
+      setEditModal(null)
+    } catch (err) {
+      toast.error(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ── Dark mode toggle ──────────────────────────────────────────────────────
+  function toggleTheme() {
+    const next = darkMode ? 'light' : 'dark'
+    document.documentElement.setAttribute('data-theme', next === 'light' ? 'light' : '')
+    setDarkMode(!darkMode)
+  }
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+  async function handleLogout() {
+    try { await logout(); navigate('/login') }
+    catch { toast.error('Failed to logout') }
+  }
+
+  // ── Delete account ────────────────────────────────────────────────────────
+  async function handleDelete() {
+    setSaving(true)
+    try {
+      await deleteAccount()
+      navigate('/login')
+      toast.success('Account deleted')
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete account')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div
-      onClick={() => {
-        if (notif.type !== 'group_invite') onOpen()
-      }}
-      style={{
-        ...styles.item,
-        animation: isDeleting ? 'slideOutRight 0.2s ease-in forwards' : 'popIn 0.3s ease-out',
-        ...style,
-      }}
-    >
-      <div style={styles.avatarWrap}>
-        {notif.fromPhoto ? (
-          <img src={notif.fromPhoto} alt={name} style={styles.avatar} />
-        ) : (
-          <div style={{ ...styles.avatar, background: ac.bg, color: ac.text }}>
-            {getInitials(name)}
-          </div>
-        )}
-      </div>
+    <div style={S.page}>
 
-      <div style={styles.body}>
-        <div style={styles.topRow}>
-          <div style={styles.iconPill}>{getIcon()}</div>
-          <div style={styles.itemTitle}>{getTitle()}</div>
-          {!notif.read && <span style={styles.unreadDot} />}
+      {/* ── Hero ─────────────────────────────────────────────────────────── */}
+      <div style={S.hero}>
+        {/* Avatar */}
+        <div style={{ position: 'relative', display: 'inline-flex' }}>
+          <motion.div
+            whileHover={{ scale: 1.04 }}
+            style={{ cursor: 'pointer' }}
+            onClick={() => fileRef.current?.click()}
+          >
+            {user?.photoURL ? (
+              <img src={user.photoURL} alt={user.displayName} style={S.avatar} />
+            ) : (
+              <div style={{ ...S.avatar, background: ac.bg, color: ac.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', fontWeight: 700 }}>
+                {getInitials(user?.displayName || '?')}
+              </div>
+            )}
+          </motion.div>
+
+          <motion.button
+            whileHover={{ scale: 1.15 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={() => fileRef.current?.click()}
+            disabled={photoLoading}
+            style={S.cameraBtn}
+            title="Change photo"
+          >
+            {photoLoading
+              ? <div style={{ width: 14, height: 14, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.65s linear infinite' }} />
+              : <Camera size={15} weight="fill" />
+            }
+          </motion.button>
+
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhotoChange} />
         </div>
 
-        {getBody() && <div style={styles.text}>{getBody()}</div>}
-
-        <div style={styles.time}>{formatTime(toDateValue(notif))}</div>
+        {/* Name + username */}
+        <div style={{ textAlign: 'center', marginTop: '4px' }}>
+          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#fff', letterSpacing: '-0.02em' }}>
+            {user?.displayName || 'Your Name'}
+          </h2>
+          {user?.username && (
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>
+              @{user.username}
+            </p>
+          )}
+          {user?.bio && (
+            <p style={{ margin: '8px auto 0', fontSize: '13px', color: 'rgba(255,255,255,0.65)', maxWidth: '260px', lineHeight: 1.5 }}>
+              {user.bio}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div style={styles.actions}>
-        {notif.type === 'group_invite' ? (
-          <>
-            <button
-              onClick={handleJoinInvite}
-              disabled={accepting}
-              style={{ ...styles.actionBtn, ...styles.acceptBtn }}
-              title="Join group"
+      {/* ── Content ──────────────────────────────────────────────────────── */}
+      <div style={S.content}>
+
+        {/* Account section */}
+        <SectionLabel label="Account" />
+        <div style={S.card}>
+          <SettingsRow
+            Icon={User}
+            label="Display Name"
+            value={user?.displayName || '—'}
+            onClick={() => openEdit('name')}
+            actionIcon={<PencilSimple size={15} />}
+          />
+          <SettingsRow
+            Icon={FileText}
+            label="Bio"
+            value={user?.bio || 'Add a bio'}
+            valueDim={!user?.bio}
+            onClick={() => openEdit('bio')}
+            actionIcon={<PencilSimple size={15} />}
+          />
+          <SettingsRow
+            Icon={At}
+            label="Username"
+            value={user?.username ? `@${user.username}` : '—'}
+            noBorder
+          />
+        </div>
+
+        {/* Contact section */}
+        <SectionLabel label="Contact" />
+        <div style={S.card}>
+          <SettingsRow
+            Icon={EnvelopeSimple}
+            label="Email"
+            value={user?.email || '—'}
+          />
+          <SettingsRow
+            Icon={ShieldCheck}
+            label="Email verified"
+            value={user?.emailVerified ? 'Verified' : 'Not verified'}
+            valueColor={user?.emailVerified ? 'var(--success)' : 'var(--warning)'}
+            noBorder
+          />
+        </div>
+
+        {/* Preferences */}
+        <SectionLabel label="Preferences" />
+        <div style={S.card}>
+          <SettingsRow
+            Icon={darkMode ? Moon : Sun}
+            label="Dark mode"
+            value={darkMode ? 'On' : 'Off'}
+            onClick={toggleTheme}
+            actionIcon={
+              <div style={{
+                width: 40, height: 22, borderRadius: 999,
+                background: darkMode ? 'var(--primary)' : 'var(--bg-4)',
+                position: 'relative', transition: 'background 0.2s',
+                flexShrink: 0,
+              }}>
+                <motion.div
+                  animate={{ x: darkMode ? 19 : 1 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 28 }}
+                  style={{ position: 'absolute', top: 2, width: 18, height: 18, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }}
+                />
+              </div>
+            }
+            noBorder
+          />
+        </div>
+
+        {/* Danger */}
+        <SectionLabel label="Account Actions" />
+        <div style={S.card}>
+          <SettingsRow
+            Icon={SignOut}
+            label="Sign out"
+            labelColor="var(--text-primary)"
+            onClick={handleLogout}
+            noBorder={false}
+          />
+          <SettingsRow
+            Icon={Trash}
+            label="Delete account"
+            labelColor="var(--danger)"
+            iconColor="var(--danger)"
+            iconBg="rgba(239,68,68,0.1)"
+            onClick={() => setEditModal('delete')}
+            noBorder
+          />
+        </div>
+
+      </div>
+
+      {/* ── Edit Modal ────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {editModal && editModal !== 'delete' && (
+          <motion.div
+            style={S.overlay}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setEditModal(null)}
+          >
+            <motion.div
+              style={S.modal}
+              initial={{ y: 40, opacity: 0, scale: 0.97 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 30, opacity: 0, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              onClick={e => e.stopPropagation()}
             >
-              {accepting ? <Spinner size={12} /> : <Check size={14} />}
-            </button>
-            <button
-              onClick={handleDismissInvite}
-              style={{ ...styles.actionBtn, ...styles.declineBtn }}
-              title="Delete invite"
-            >
-              <Trash2 size={14} />
-            </button>
-          </>
-        ) : (
-          <>
-            {!notif.read && (
-              <button
-                onClick={e => {
-                  e.stopPropagation()
-                  onMarkRead()
-                }}
-                style={{ ...styles.actionBtn, ...styles.acceptBtn }}
-                title="Mark as read"
+              <div style={S.modalHeader}>
+                <span style={S.modalTitle}>
+                  {editModal === 'name' ? 'Edit Display Name' : 'Edit Bio'}
+                </span>
+                <motion.button
+                  style={S.modalClose}
+                  onClick={() => setEditModal(null)}
+                  whileHover={{ rotate: 90, scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                >
+                  <X size={15} />
+                </motion.button>
+              </div>
+
+              {editModal === 'bio' ? (
+                <textarea
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  placeholder="Write something about yourself..."
+                  maxLength={160}
+                  rows={4}
+                  autoFocus
+                  style={{ ...S.input, resize: 'none', lineHeight: 1.5 }}
+                  onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  placeholder="Your display name"
+                  maxLength={50}
+                  autoFocus
+                  style={S.input}
+                  onFocus={e => (e.target.style.borderColor = 'var(--primary)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+                />
+              )}
+
+              {editModal === 'bio' && (
+                <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'right' }}>
+                  {editValue.length}/160
+                </p>
+              )}
+
+              <motion.button
+                onClick={handleSave}
+                disabled={saving}
+                whileHover={!saving ? { scale: 1.02, y: -1 } : {}}
+                whileTap={!saving ? { scale: 0.97 } : {}}
+                style={{ ...S.saveBtn, opacity: saving ? 0.6 : 1 }}
               >
-                <Check size={14} />
-              </button>
-            )}
-            <button
-              onClick={e => {
-                e.stopPropagation()
-                onDelete()
-              }}
-              style={{ ...styles.actionBtn, ...styles.declineBtn }}
-              title="Delete"
-            >
-              <Trash2 size={14} />
-            </button>
-          </>
+                <Check size={16} weight="bold" />
+                {saving ? 'Saving...' : 'Save'}
+              </motion.button>
+            </motion.div>
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
+
+      {/* ── Delete Confirm Modal ──────────────────────────────────────────── */}
+      <AnimatePresence>
+        {editModal === 'delete' && (
+          <motion.div
+            style={S.overlay}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setEditModal(null)}
+          >
+            <motion.div
+              style={S.modal}
+              initial={{ y: 40, opacity: 0, scale: 0.97 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 30, opacity: 0, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
+                <div style={{ width: 56, height: 56, borderRadius: 18, background: 'rgba(239,68,68,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: 'var(--danger)' }}>
+                  <Warning size={28} weight="fill" />
+                </div>
+                <h3 style={{ margin: '0 0 8px', fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>Delete Account</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  This will permanently delete your account, messages, and all data. This cannot be undone.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <motion.button
+                  onClick={() => setEditModal(null)}
+                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Cancel
+                </motion.button>
+                <motion.button
+                  onClick={handleDelete}
+                  disabled={saving}
+                  whileHover={!saving ? { scale: 1.02 } : {}} whileTap={!saving ? { scale: 0.97 } : {}}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: 'var(--danger)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
+                >
+                  {saving ? 'Deleting...' : 'Delete'}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
-function TabButton({ active, onClick, children }) {
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionLabel({ label }) {
   return (
-    <button
+    <p style={{ margin: '20px 0 6px 4px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>
+      {label}
+    </p>
+  )
+}
+
+function SettingsRow({ Icon, label, value, valueDim, valueColor, labelColor, iconColor, iconBg, onClick, actionIcon, noBorder }) {
+  return (
+    <motion.button
       onClick={onClick}
+      whileHover={onClick ? { x: 2, backgroundColor: 'var(--bg-secondary)' } : {}}
+      whileTap={onClick ? { scale: 0.99 } : {}}
       style={{
-        ...styles.tabBtn,
-        background: active ? 'var(--primary)' : 'transparent',
-        color: active ? '#fff' : 'var(--text-secondary)',
-        borderColor: active ? 'var(--primary)' : 'var(--border)',
+        width: '100%', display: 'flex', alignItems: 'center', gap: '12px',
+        padding: '12px 14px', border: 'none', textAlign: 'left',
+        background: 'transparent', cursor: onClick ? 'pointer' : 'default',
+        borderBottom: noBorder ? 'none' : '1px solid var(--border)',
       }}
     >
-      {children}
-    </button>
-  )
-}
-
-function EmptyState({ title, text }) {
-  return (
-    <div style={styles.emptyState}>
-      <div style={styles.emptyIconWrap}>
-        <Bell size={30} />
+      <div style={{
+        width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+        background: iconBg || 'var(--primary-light)',
+        color: iconColor || 'var(--primary)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Icon size={18} />
       </div>
-      <div style={styles.emptyTitle}>{title}</div>
-      <div style={styles.emptyText}>{text}</div>
-    </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: labelColor || 'var(--text-primary)' }}>
+          {label}
+        </p>
+        {value && (
+          <p style={{ margin: '2px 0 0', fontSize: '12px', color: valueColor || (valueDim ? 'var(--text-tertiary)' : 'var(--text-secondary)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {value}
+          </p>
+        )}
+      </div>
+      {actionIcon && (
+        <div style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>
+          {actionIcon}
+        </div>
+      )}
+    </motion.button>
   )
 }
 
-const styles = {
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const S = {
   page: {
     height: '100%',
     display: 'flex',
@@ -437,233 +451,114 @@ const styles = {
     background: 'var(--bg-secondary)',
     overflow: 'hidden',
   },
-  center: {
-    flex: 1,
+  hero: {
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '16px 18px 12px',
+    padding: '28px 20px 22px',
+    background: 'linear-gradient(160deg, #020202 0%, #0d0d0d 55%, #001428 100%)',
     borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
     flexShrink: 0,
+    gap: '6px',
   },
-  backBtn: {
-    width: '38px',
-    height: '38px',
-    borderRadius: '12px',
-    border: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-    color: 'var(--text-primary)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+  avatar: {
+    width: 82,
+    height: 82,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2.5px solid rgba(30,144,255,0.35)',
+  },
+  cameraBtn: {
+    position: 'absolute',
+    bottom: 0, right: 0,
+    width: 28, height: 28,
+    borderRadius: '50%',
+    background: 'var(--primary)',
+    border: '2.5px solid #0d0d0d',
+    color: '#fff',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
     cursor: 'pointer',
-    flexShrink: 0,
-  },
-  headerTitle: {
-    margin: 0,
-    fontSize: '20px',
-    fontWeight: 800,
-    color: 'var(--text-primary)',
-  },
-  subtitle: {
-    margin: '3px 0 0',
-    fontSize: '12px',
-    color: 'var(--text-tertiary)',
-  },
-  secondaryBtn: {
-    border: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-    color: 'var(--text-primary)',
-    borderRadius: '12px',
-    padding: '10px 14px',
-    fontSize: '13px',
-    fontWeight: 800,
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '8px',
-    flexShrink: 0,
-  },
-  tabs: {
-    display: 'flex',
-    gap: '8px',
-    padding: '12px 18px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
-    flexShrink: 0,
-    overflowX: 'auto',
-  },
-  tabBtn: {
-    border: '1px solid var(--border)',
-    borderRadius: '999px',
-    padding: '8px 14px',
-    fontSize: '13px',
-    fontWeight: 800,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    transition: 'all 0.15s ease',
-    background: 'transparent',
-    color: 'var(--text-tertiary)',
+    boxShadow: '0 2px 8px rgba(30,144,255,0.4)',
   },
   content: {
     flex: 1,
     overflowY: 'auto',
-    padding: '16px 18px 18px',
+    padding: '8px 16px 32px',
+    WebkitOverflowScrolling: 'touch',
   },
-  section: {
-    marginBottom: '16px',
-  },
-  dateLabel: {
-    fontSize: '12px',
-    fontWeight: 900,
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-    color: 'var(--text-tertiary)',
-    margin: '0 0 10px 2px',
-  },
-  list: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-  },
-  item: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '12px',
-    padding: '12px',
-    borderRadius: '16px',
-    border: '1px solid var(--border)',
+  card: {
     background: 'var(--bg-primary)',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease',
-  },
-  avatarWrap: {
-    flexShrink: 0,
-  },
-  avatar: {
-    width: '46px',
-    height: '46px',
-    borderRadius: '50%',
-    objectFit: 'cover',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 900,
-    fontSize: '15px',
-  },
-  body: {
-    flex: 1,
-    minWidth: 0,
-  },
-  topRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    minWidth: 0,
-  },
-  iconPill: {
-    width: '22px',
-    height: '22px',
-    borderRadius: '7px',
-    background: 'var(--primary-light)',
-    color: 'var(--primary)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  itemTitle: {
-    fontSize: '14px',
-    fontWeight: 800,
-    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 16,
     overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    flex: 1,
   },
-  unreadDot: {
-    width: '8px',
-    height: '8px',
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.75)',
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    zIndex: 100,
+    padding: '0 0 0',
+  },
+  modal: {
+    width: '100%',
+    maxWidth: 480,
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: '20px 20px 0 0',
+    padding: '20px 20px 32px',
+    boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
+  },
+  modalHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+  },
+  modalClose: {
+    width: 30, height: 30,
     borderRadius: '50%',
-    background: 'var(--primary)',
-    flexShrink: 0,
-  },
-  text: {
-    marginTop: '6px',
-    fontSize: '12px',
+    border: '1px solid var(--border)',
+    background: 'var(--bg-secondary)',
     color: 'var(--text-secondary)',
-    lineHeight: 1.5,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
   },
-  time: {
-    marginTop: '7px',
-    fontSize: '11px',
-    color: 'var(--text-tertiary)',
+  input: {
+    width: '100%',
+    padding: '11px 13px',
+    borderRadius: 11,
+    border: '1px solid var(--border)',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    fontSize: 14,
+    outline: 'none',
+    boxSizing: 'border-box',
+    transition: 'border-color 0.18s, box-shadow 0.18s',
+    fontFamily: 'inherit',
   },
-  actions: {
-    display: 'flex',
-    gap: '8px',
-    flexShrink: 0,
-  },
-  actionBtn: {
-    width: '34px',
-    height: '34px',
-    borderRadius: '10px',
-    border: '1px solid',
+  saveBtn: {
+    marginTop: 14,
+    width: '100%',
+    padding: '12px',
+    borderRadius: 12,
+    border: 'none',
+    background: 'var(--primary)',
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 700,
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
-  },
-  acceptBtn: {
-    borderColor: 'rgba(59,130,246,0.28)',
-    background: 'rgba(59,130,246,0.10)',
-    color: 'var(--primary)',
-  },
-  declineBtn: {
-    borderColor: 'rgba(239,68,68,0.28)',
-    background: 'rgba(239,68,68,0.10)',
-    color: 'var(--danger)',
-  },
-  emptyState: {
-    minHeight: '280px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textAlign: 'center',
-    gap: '10px',
-  },
-  emptyIconWrap: {
-    width: '70px',
-    height: '70px',
-    borderRadius: '22px',
-    border: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
-    color: 'var(--text-tertiary)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.5,
-  },
-  emptyTitle: {
-    fontSize: '17px',
-    fontWeight: 900,
-    color: 'var(--text-primary)',
-  },
-  emptyText: {
-    fontSize: '13px',
-    color: 'var(--text-tertiary)',
-    maxWidth: '320px',
-    lineHeight: 1.5,
+    gap: 8,
+    boxShadow: '0 4px 14px rgba(30,144,255,0.3)',
   },
 }
