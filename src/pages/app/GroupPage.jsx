@@ -31,19 +31,19 @@ import {
   Check,
   Crown,
   Copy,
-  LogOut,
+  SignOut,
   Plus,
-  Search,
-  Shield,
-  Trash2,
+  MagnifyingGlass,
+  ShieldCheck,
+  Trash,
   UserMinus,
   X,
-  BellOff,
+  BellSlash,
   Bell,
-  Pin,
-  PinOff,
+  PushPin,
+  PushPinSlash,
   Users,
-} from 'lucide-react'
+} from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 export default function GroupPage() {
@@ -501,16 +501,16 @@ export default function GroupPage() {
 
             {/* Actions */}
             <div style={styles.actionRow}>
-              <button onClick={handleCopyGroupId} style={styles.secondaryBtn}>
-                <Copy size={16} /> Copy ID
+                            <button onClick={handleCopyGroupId} style={styles.secondaryBtn}>
+                <Copy size={16} weight="bold" /> Copy ID
               </button>
 
-              <button
+                            <button
                 onClick={handleTogglePin}
                 disabled={toggling}
                 style={{ ...styles.secondaryBtn, opacity: toggling ? 0.6 : 1 }}
               >
-                {isPinned ? <PinOff size={16} /> : <Pin size={16} />}
+                {isPinned ? <PushPinSlash size={16} weight="bold" /> : <PushPin size={16} weight="bold" />}
                 {isPinned ? 'Unpin' : 'Pin'}
               </button>
 
@@ -519,12 +519,12 @@ export default function GroupPage() {
                 disabled={toggling}
                 style={{ ...styles.secondaryBtn, opacity: toggling ? 0.6 : 1 }}
               >
-                {isMuted ? <Bell size={16} /> : <BellOff size={16} />}
+                {isMuted ? <Bell size={16} weight="bold" /> : <BellSlash size={16} weight="bold" />}
                 {isMuted ? 'Unmute' : 'Mute'}
               </button>
 
               <button onClick={() => setTab('members')} style={styles.secondaryBtn}>
-                <Users size={16} /> Members
+                <Users size={16} weight="bold" /> Members
               </button>
 
               <button
@@ -532,7 +532,7 @@ export default function GroupPage() {
                 disabled={saving}
                 style={{ ...styles.warningBtn, opacity: saving ? 0.6 : 1 }}
               >
-                <LogOut size={16} /> Leave group
+                <SignOut size={16} weight="bold" /> Leave group
               </button>
 
               {/* Only admins see Delete */}
@@ -542,7 +542,7 @@ export default function GroupPage() {
                   disabled={saving}
                   style={{ ...styles.dangerBtn, opacity: saving ? 0.6 : 1 }}
                 >
-                  <Trash2 size={16} /> Delete group
+                  <Trash size={16} weight="bold" /> Delete group
                 </button>
               )}
             </div>
@@ -596,19 +596,19 @@ export default function GroupPage() {
 
                     {canEdit && !me && (
                       <div style={styles.memberActions}>
-                        <button
+                                                <button
                           onClick={() => handleToggleAdmin(uid)}
                           style={styles.iconActionBtn}
                           title={admin ? 'Remove admin' : 'Make admin'}
                         >
-                          <Shield size={16} />
+                          <ShieldCheck size={16} weight="bold" />
                         </button>
                         <button
                           onClick={() => handleRemoveMember(uid)}
                           style={{ ...styles.iconActionBtn, ...styles.iconActionDanger }}
                           title="Remove member"
                         >
-                          <UserMinus size={16} />
+                          <UserMinus size={16} weight="bold" />
                         </button>
                       </div>
                     )}
@@ -658,12 +658,12 @@ export default function GroupPage() {
 
                         {canEdit && (
                           <div style={styles.memberActions}>
-                            <button
+                                                        <button
                               onClick={() => handleCancelInvite(uid)}
                               style={{ ...styles.iconActionBtn, ...styles.iconActionDanger }}
                               title="Cancel invite"
                             >
-                              <X size={16} />
+                              <X size={16} weight="bold" />
                             </button>
                           </div>
                         )}
@@ -691,8 +691,8 @@ export default function GroupPage() {
               )}
             </div>
 
-            <div style={styles.searchBar}>
-              <Search size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                        <div style={styles.searchBar}>
+              <MagnifyingGlass size={16} weight="bold" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
               <input
                 value={searchQ}
                 onChange={handleSearch}
@@ -743,10 +743,10 @@ export default function GroupPage() {
                       </div>
 
                       <div style={styles.resultRight}>
-                        {isSelected ? (
-                          <span style={styles.checkPill}><Check size={13} /></span>
+                                                {isSelected ? (
+                          <span style={styles.checkPill}><Check size={13} weight="bold" /></span>
                         ) : (
-                          <span style={styles.addPill}><Plus size={13} /></span>
+                          <span style={styles.addPill}><Plus size={13} weight="bold" /></span>
                         )}
                       </div>
                     </button>
@@ -795,7 +795,7 @@ function InfoCard({ label, value }) {
 function EmptySearch({ text }) {
   return (
     <div style={styles.emptyState}>
-      <div style={styles.emptyIconWrap}><Search size={34} /></div>
+      <div style={styles.emptyIconWrap}><MagnifyingGlass size={34} weight="light" /></div>
       <div style={styles.emptyTitle}>Nothing here</div>
       <div style={styles.emptyText}>{text}</div>
     </div>

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
-import { Check, CheckCheck, Reply, Smile, Trash2, FileText, Download, Play } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { Check, Checks, ArrowBendUpRight, Smiley, Trash, FileText, Download, Play } from '@phosphor-icons/react'
 import { formatTime } from '../lib/utils'
 import { addReaction, removeReaction, softDeleteMessage } from '../services/chatService'
 
@@ -157,7 +158,7 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
           {renderContent()}
           <div className="flex items-center gap-1 mt-0.5 justify-end">
             <span className={`text-[10px] ${isMine ? 'text-white/70' : 'text-[var(--text-3)]'}`}>{formatTime(msg.createdAt)}</span>
-            {isMine && !isUnsent && (isRead ? <CheckCheck size={12} className="text-white/90" /> : <Check size={12} className="text-white/70" />)}
+            {isMine && !isUnsent && (isRead ? <Checks size={12} className="text-white/90" /> : <Check size={12} className="text-white/70" />)}
           </div>
         </div>
 
@@ -191,16 +192,16 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
               ))
             ) : (
               <>
-                <button onClick={() => setShowEmojis(true)} title="React" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-2)' }}><Smile size={16} /></button>
-                <button onClick={() => { onReply(msg); setShowActions(false) }} title="Reply" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-2)' }}><Reply size={16} /></button>
+                                <button onClick={() => setShowEmojis(true)} title="React" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-2)' }}><Smiley size={16} /></button>
+                <button onClick={() => { onReply(msg); setShowActions(false) }} title="Reply" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-2)' }}><ArrowBendUpRight size={16} /></button>
                 {isMine && (
                   <>
                     <button onClick={handleUnsent} title="Unsend for everyone" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95 text-xs font-medium" style={{ color: 'var(--danger)' }}>Unsend</button>
-                    <button onClick={handleDeleteForMe} title="Delete for me" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-3)' }}><Trash2 size={16} /></button>
+                                        <button onClick={handleDeleteForMe} title="Delete for me" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-3)' }}><Trash size={16} /></button>
                   </>
                 )}
                 {!isMine && (
-                  <button onClick={handleDeleteForMe} title="Delete for me" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-3)' }}><Trash2 size={16} /></button>
+                  <button onClick={handleDeleteForMe} title="Delete for me" className="p-1.5 hover:bg-[var(--bg-2)] rounded-lg transition-all duration-150 hover:scale-110 active:scale-95" style={{ color: 'var(--text-3)' }}><Trash size={16} /></button>
                 )}
               </>
             )}

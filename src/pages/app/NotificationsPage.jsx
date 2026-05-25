@@ -19,15 +19,15 @@ import {
   ArrowLeft,
   Bell,
   Check,
-  CheckCheck,
+  CheckCircle,
   Heart,
   Image,
-  MessageCircle,
-  Trash2,
+  ChatCircle,
+  Trash,
   UserPlus,
   Users,
   X,
-} from 'lucide-react'
+} from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 function toDateValue(notif) {
@@ -166,8 +166,8 @@ export default function NotificationsPage() {
         </div>
 
         {unreadCount > 0 && (
-          <button onClick={markAllRead} style={styles.secondaryBtn}>
-            <CheckCheck size={16} />
+                    <button onClick={markAllRead} style={styles.secondaryBtn}>
+            <CheckCircle size={16} />
             Mark all read
           </button>
         )}
@@ -241,16 +241,16 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, styl
   const name = safeUserDisplayName({ displayName: notif.fromName }, !senderExists)
   const ac = getAvatarColor(notif.fromName || 'unknown')
 
-  function getIcon() {
+    function getIcon() {
     switch (notif.type) {
-      case 'message':        return <MessageCircle size={14} />
-      case 'media':          return <Image size={14} />
-      case 'reaction':       return <Heart size={14} />
-      case 'friend_request': return <UserPlus size={14} />
-      case 'group_invite':   return <Users size={14} />
-      case 'announce':       return <Bell size={14} />
-      case 'mention':        return <Users size={14} />
-      default:               return <Bell size={14} />
+      case 'message':        return <ChatCircle size={14} weight="fill" />
+      case 'media':          return <Image size={14} weight="fill" />
+      case 'reaction':       return <Heart size={14} weight="fill" />
+      case 'friend_request': return <UserPlus size={14} weight="fill" />
+      case 'group_invite':   return <Users size={14} weight="fill" />
+      case 'announce':       return <Bell size={14} weight="fill" />
+      case 'mention':        return <Users size={14} weight="fill" />
+      default:               return <Bell size={14} weight="fill" />
     }
   }
 
@@ -342,20 +342,20 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, styl
               style={{ ...styles.actionBtn, ...styles.acceptBtn }}
               title="Join group"
             >
-              {accepting ? <Spinner size={12} /> : <Check size={14} />}
+                            {accepting ? <Spinner size={12} /> : <Check size={14} weight="bold" />}
             </button>
             <button
               onClick={handleDismissInvite}
               style={{ ...styles.actionBtn, ...styles.declineBtn }}
               title="Delete invite"
             >
-              <Trash2 size={14} />
+              <Trash size={14} weight="bold" />
             </button>
           </>
         ) : (
           <>
             {!notif.read && (
-              <button
+                            <button
                 onClick={e => {
                   e.stopPropagation()
                   onMarkRead()
@@ -363,7 +363,7 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, styl
                 style={{ ...styles.actionBtn, ...styles.acceptBtn }}
                 title="Mark as read"
               >
-                <Check size={14} />
+                <Check size={14} weight="bold" />
               </button>
             )}
             <button
@@ -374,7 +374,7 @@ function NotifItem({ notif, user, onOpen, onMarkRead, onDelete, isDeleting, styl
               style={{ ...styles.actionBtn, ...styles.declineBtn }}
               title="Delete"
             >
-              <Trash2 size={14} />
+              <Trash size={14} weight="bold" />
             </button>
           </>
         )}

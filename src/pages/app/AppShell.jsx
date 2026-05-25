@@ -18,6 +18,7 @@ import {
   Bell,
   UserCircle,
   SignOut,
+  GearSix,
   UsersThree,
   NotePencil,
   MagnifyingGlass,
@@ -37,7 +38,8 @@ const NAV = [
   { id: 'chats',   Icon: ChatCircleDots, label: 'Chats',         path: '/app/chats' },
   { id: 'friends', Icon: Users,          label: 'Friends',       path: '/app/friends' },
   { id: 'notifs',  Icon: Bell,           label: 'Notifications', path: '/app/notifications' },
-  { id: 'profile', Icon: UserCircle,     label: 'Profile',       path: '/app/profile' },
+  { id: 'profile', Icon: null,           label: 'Profile',       path: '/app/profile', photo: true },
+  { id: 'settings', Icon: GearSix,       label: 'Settings',      path: '/app/settings' },
 ]
 
 const FILTER_TABS = ['all', 'unread', 'groups']
@@ -64,9 +66,10 @@ export default function AppShell() {
   const showMobileNav     = !isChatThreadRoute
   const activeConvId      = location.pathname.match(/\/app\/chats\/(.+)/)?.[1]
 
-  const activeNav = (() => {
+    const activeNav = (() => {
     if (location.pathname.startsWith('/app/friends'))       return 'friends'
     if (location.pathname.startsWith('/app/notifications')) return 'notifs'
+    if (location.pathname.startsWith('/app/settings'))      return 'settings'
     if (location.pathname.startsWith('/app/profile'))       return 'profile'
     return 'chats'
   })()
@@ -264,7 +267,7 @@ export default function AppShell() {
           <img src="/logo.png" alt="LikeChat" style={{ width: '24px', height: '24px', objectFit: 'contain' }} />
         </motion.button>
 
-        {NAV.map(({ id, Icon, label, path }) => {
+                {NAV.map(({ id, Icon, label, path, photo }) => {
           const isActive = activeNav === id
           return (
             <motion.button
@@ -283,7 +286,20 @@ export default function AppShell() {
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                 />
               )}
-              <Icon size={22} weight={isActive ? 'fill' : 'regular'} />
+              {photo ? (
+                user?.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName}
+                    style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--text-tertiary)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontSize: 11, fontWeight: 800 }}>
+                    {(user?.displayName || '?')[0]}
+                  </div>
+                )
+              ) : (
+                <Icon size={22} weight={isActive ? 'fill' : 'regular'} />
+              )}
               {id === 'notifs' && notifUnread > 0 && (
                 <Badge count={notifUnread} />
               )}
@@ -437,7 +453,7 @@ export default function AppShell() {
       {/* ── Mobile bottom nav ────────────────────────────────────────────── */}
       {showMobileNav && (
         <nav className="mobile-bottom-nav">
-          {NAV.map(({ id, Icon, path }) => {
+                    {NAV.map(({ id, Icon, path, photo }) => {
             const isActive = activeNav === id
             return (
               <motion.button
@@ -447,7 +463,20 @@ export default function AppShell() {
                 whileTap={{ scale: 0.88 }}
                 transition={{ type: 'spring', stiffness: 400, damping: 20 }}
               >
-                <Icon size={24} weight={isActive ? 'fill' : 'regular'} />
+                {photo ? (
+                  user?.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName}
+                      style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--text-tertiary)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#fff', fontSize: 11, fontWeight: 800 }}>
+                      {(user?.displayName || '?')[0]}
+                    </div>
+                  )
+                ) : (
+                  <Icon size={24} weight={isActive ? 'fill' : 'regular'} />
+                )}
                 {id === 'notifs' && notifUnread > 0 && (
                   <Badge count={notifUnread} style={{ top: '8px', right: '18px' }} />
                 )}

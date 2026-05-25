@@ -1,5 +1,6 @@
-import { X, Loader2, EyeOff, Eye } from 'lucide-react'
+import { X, Spinner as SpinnerIcon, EyeSlash, Eye } from '@phosphor-icons/react'
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { getInitials, getAvatarColor } from '../lib/utils'
 
 export function Button({
@@ -25,15 +26,18 @@ export function Button({
     lg: 'px-5 py-2.5 text-sm gap-2',
   }
 
-  return (
-    <button
+    return (
+    <motion.button
       className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
       disabled={loading || props.disabled}
+      whileHover={!loading && !props.disabled ? { scale: 1.02, y: -1 } : {}}
+      whileTap={!loading && !props.disabled ? { scale: 0.97 } : {}}
+      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
       {...props}
     >
-      {loading && <Loader2 size={14} className="animate-spin" />}
+      {loading && <SpinnerIcon size={14} className="animate-spin" />}
       {children}
-    </button>
+    </motion.button>
   )
 }
 
@@ -66,7 +70,7 @@ export function Input({
             onClick={() => setShow(s => !s)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)] transition-colors duration-150"
           >
-            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+            {show ? <EyeSlash size={16} /> : <Eye size={16} />}
           </button>
         )}
       </div>
@@ -78,36 +82,48 @@ export function Input({
 }
 
 export function Modal({ open, onClose, title, children }) {
-  if (!open) return null
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-      onClick={onClose}
-      style={{ animation: 'fadeIn 0.2s ease-out' }}
-    >
-      <div
-        className="bg-[var(--bg-1)] rounded-2xl shadow-lg w-full max-w-md mx-4 p-5"
-        onClick={e => e.stopPropagation()}
-        style={{ animation: 'popIn 0.3s ease-out' }}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-[var(--text-1)] text-base">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-[var(--text-3)] hover:text-[var(--text-1)] transition-all duration-150 hover:scale-110 active:scale-95"
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          <motion.div
+            className="bg-[var(--bg-1)] rounded-2xl shadow-lg w-full max-w-md mx-4 p-5"
+            onClick={e => e.stopPropagation()}
+            initial={{ y: 20, opacity: 0, scale: 0.95 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: 15, opacity: 0, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 25 }}
           >
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-[var(--text-1)] text-base">{title}</h2>
+              <motion.button
+                onClick={onClose}
+                className="text-[var(--text-3)] hover:text-[var(--text-1)]"
+                whileHover={{ rotate: 90, scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+              >
+                <X size={20} />
+              </motion.button>
+            </div>
+            {children}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 
 export function Spinner({ size = 20 }) {
   return (
-    <Loader2
+    <SpinnerIcon
       size={size}
       className="animate-spin text-[var(--accent)]"
     />
@@ -119,7 +135,12 @@ export function Avatar({ user, size = 40, showStatus = false }) {
   const { bg, text } = getAvatarColor(name)
 
   return (
-    <div className="relative inline-flex shrink-0 transition-transform duration-200 hover:scale-105" style={{ width: size, height: size }}>
+    <motion.div
+      className="relative inline-flex shrink-0"
+      style={{ width: size, height: size }}
+      whileHover={{ scale: 1.05 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+    >
       {user?.photoURL ? (
         <img
           src={user.photoURL}
@@ -141,8 +162,8 @@ export function Avatar({ user, size = 40, showStatus = false }) {
         </div>
       )}
       {showStatus && user?.status && (
-        <span
-          className="absolute bottom-0 right-0 rounded-full border-2 border-[var(--bg-1)] animate-pulse"
+        <motion.span
+          className="absolute bottom-0 right-0 rounded-full border-2 border-[var(--bg-1)]"
           style={{
             width: size * 0.28,
             height: size * 0.28,
@@ -151,17 +172,29 @@ export function Avatar({ user, size = 40, showStatus = false }) {
               user.status === 'away'    ? 'var(--away)'    :
               'var(--offline)',
           }}
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 20 }}
         />
       )}
-    </div>
+    </motion.div>
   )
 }
 
 export function Badge({ count }) {
-  if (!count) return null
   return (
-    <span className="inline-flex items-center justify-center rounded-full bg-[var(--accent)] text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1">
-      {count > 99 ? '99+' : count}
-    </span>
+    <AnimatePresence>
+      {count > 0 && (
+        <motion.span
+          className="inline-flex items-center justify-center rounded-full bg-[var(--accent)] text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1"
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 20 }}
+        >
+          {count > 99 ? '99+' : count}
+        </motion.span>
+      )}
+    </AnimatePresence>
   )
 }

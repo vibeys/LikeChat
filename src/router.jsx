@@ -10,6 +10,7 @@ import ChatWindow from './pages/app/ChatWindow'
 import GroupPage from './pages/app/GroupPage'
 import FriendsPage from './pages/app/FriendsPage'
 import ProfilePage from './pages/app/ProfilePage'
+import SettingsPage from './pages/app/SettingsPage'
 import NotificationsPage from './pages/app/NotificationsPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
               { path: '/app/friends',            element: <FriendsPage /> },
               { path: '/app/notifications',      element: <NotificationsPage /> },
               { path: '/app/profile',            element: <ProfilePage /> },
+              { path: '/app/settings',           element: <SettingsPage /> },
             ],
           },
         ],

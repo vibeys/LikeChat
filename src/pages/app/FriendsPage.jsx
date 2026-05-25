@@ -15,16 +15,16 @@ import { createPrivateConv } from '../../services/chatService'
 import { getAvatarColor, getInitials } from '../../lib/utils'
 import { Spinner } from '../../components/UI'
 import {
-  Search,
+  MagnifyingGlass,
   UserPlus,
-  MessageCircle,
+  ChatCircle,
   Check,
   X,
-  Ban,
+  Prohibit,
   Users,
   Clock,
   ArrowLeft,
-} from 'lucide-react'
+} from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 export default function FriendsPage() {
@@ -409,7 +409,7 @@ export default function FriendsPage() {
               border: '1px solid var(--border)',
               marginBottom: '14px',
             }}>
-              <Search size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+              <MagnifyingGlass size={16} weight="bold" style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
               <input
                 className="form-input"
                 style={{
@@ -436,8 +436,8 @@ export default function FriendsPage() {
                 text="Type a username to find people."
               />
             ) : results.length === 0 && !searching ? (
-              <EmptyState
-                icon={<Search size={56} />}
+                            <EmptyState
+                icon={<MagnifyingGlass size={56} weight="light" />}
                 title="No users found"
                 text={`No one found for "@${searchQ}"`}
               />
@@ -570,11 +570,11 @@ function FriendCard({ user, onMessage, onBlock, acting, style }) {
           <Spinner size={14} />
         ) : (
           <>
-            <ActionIconButton title="Message" onClick={onMessage}>
-              <MessageCircle size={16} />
+                        <ActionIconButton title="Message" onClick={onMessage}>
+              <ChatCircle size={16} weight="bold" />
             </ActionIconButton>
             <ActionIconButton title="Block" onClick={onBlock} danger>
-              <Ban size={16} />
+              <Prohibit size={16} weight="bold" />
             </ActionIconButton>
           </>
         )}
@@ -632,11 +632,11 @@ function RequestCard({ user, acting, onAccept, onDecline, style }) {
           <Spinner size={14} />
         ) : (
           <>
-            <ActionIconButton title="Accept" onClick={onAccept} accept>
-              <Check size={16} />
+                        <ActionIconButton title="Accept" onClick={onAccept} accept>
+              <Check size={16} weight="bold" />
             </ActionIconButton>
             <ActionIconButton title="Decline" onClick={onDecline} danger>
-              <X size={16} />
+              <X size={16} weight="bold" />
             </ActionIconButton>
           </>
         )}
@@ -771,8 +771,8 @@ function SearchResultCard({ user, acting, isFriend, isPending, isReceived, onAdd
           {acting ? (
             <Spinner size={14} />
           ) : (
-            <ActionIconButton title="Add Friend" onClick={onAddFriend} accept>
-              <UserPlus size={16} />
+                        <ActionIconButton title="Add Friend" onClick={onAddFriend} accept>
+              <UserPlus size={16} weight="bold" />
             </ActionIconButton>
           )}
         </div>

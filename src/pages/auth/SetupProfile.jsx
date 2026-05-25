@@ -4,7 +4,7 @@ import { useNavigate, Navigate } from 'react-router'
 import { useAuth } from '../../context/AuthContext'
 import { completeSetup } from '../../services/userService'
 import { Button, Input, Spinner } from '../../components/UI'
-import { Camera } from 'lucide-react'
+import { Camera } from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 export default function SetupProfile() {

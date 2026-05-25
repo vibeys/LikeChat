@@ -67,3 +67,19 @@ export async function completeSetup(uid, { displayName, username, bio, photoFile
     blockedUsers:  [],
   }, { merge: true })
 }
+const newUserDefaults = {
+  privacy: {
+    profileVisible:   'everyone',
+    showLastSeen:     true,
+    showOnlineStatus: true,
+    allowFriendReqs:  true,
+    readReceipts:     true,
+  },
+  notifications: {
+    messages:   true,
+    mentions:   true,
+    friendReqs: true,
+    appUpdates: false,
+    sound:      true,
+  },
+}

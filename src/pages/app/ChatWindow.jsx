@@ -1,6 +1,7 @@
 // src/pages/app/ChatWindow.jsx
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../../context/AuthContext'
 import {
   watchMessages, getConversation, markSeen,
@@ -31,12 +32,12 @@ import {
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import {
-  ArrowLeft, Search, X, Bell, BellOff, Pin, PinOff,
-  UserX, Pencil, Trash2, LogOut, Megaphone, AtSign,
-  Users, Settings, ChevronRight, Check, Shield, Info,
-  Volume2, VolumeX, UserMinus, Crown, Plus, Camera,
-  MessageCircle,
-} from 'lucide-react'
+    ArrowLeft, MagnifyingGlass, X, Bell, BellSlash, PushPin, PushPinSlash,
+  Prohibit, PencilSimple, Trash, SignOut, Megaphone, At,
+  Users, Gear, CaretRight, Check, ShieldCheck, Info,
+  SpeakerHigh, SpeakerSlash, UserMinus, Crown, Plus, Camera,
+  ChatCircle,
+} from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 function formatLastSeen(lastSeen) {
@@ -44,10 +45,10 @@ function formatLastSeen(lastSeen) {
   const date = typeof lastSeen === 'number' ? new Date(lastSeen) : lastSeen?.toDate?.() ?? new Date(lastSeen)
   const diff = Date.now() - date.getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1)  return 'Just now'
+  if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24)  return `${hrs}h ago`
+  if (hrs < 24) return `${hrs}h ago`
   return formatDate(date)
 }
 
@@ -68,24 +69,24 @@ function groupByDate(msgs) {
 
 export default function ChatWindow() {
   const { convId } = useParams()
-  const { user }   = useAuth()
-  const navigate   = useNavigate()
+  const { user } = useAuth()
+  const navigate = useNavigate()
 
-  const [convo,        setConvo]        = useState(null)
-  const [messages,     setMessages]     = useState([])
-  const [presence,     setPresence]     = useState(null)
-  const [replyTo,      setReplyTo]      = useState(null)
-  const [loading,      setLoading]      = useState(true)
-  const [showInfo,     setShowInfo]     = useState(false)
-  const [searchMode,   setSearchMode]   = useState(false)
-  const [searchQ,      setSearchQ]      = useState('')
-  const [activeCall,   setActiveCall]   = useState(null)
+  const [convo, setConvo] = useState(null)
+  const [messages, setMessages] = useState([]) 
+  const [presence, setPresence] = useState(null)
+  const [replyTo, setReplyTo] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [showInfo, setShowInfo] = useState(false)
+  const [searchMode, setSearchMode] = useState(false)
+  const [searchQ, setSearchQ] = useState('')
+  const [activeCall, setActiveCall] = useState(null)
   const [startingCall, setStartingCall] = useState(false)
 
-  const bottomRef   = useRef(null)
-  const searchRef   = useRef(null)
+  const bottomRef = useRef(null)
+  const searchRef = useRef(null)
   const messagesRef = useRef([])
-  const isAtBottom  = useRef(true)
+  const isAtBottom = useRef(true)
 
   const { typingUsers } = useTyping(convId, user?.uid)
 
@@ -108,8 +109,9 @@ export default function ChatWindow() {
 
   useEffect(() => {
     function onFocus() {
-      if (convId && user?.uid && isAtBottom.current)
+      if (convId && user?.uid && isAtBottom.current) {
         markSeen(convId, user.uid, messagesRef.current).catch(() => {})
+      }
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
@@ -127,7 +129,9 @@ export default function ChatWindow() {
     isAtBottom.current = true
   }, [messages.length])
 
-  useEffect(() => { if (searchMode) searchRef.current?.focus() }, [searchMode])
+  useEffect(() => {
+    if (searchMode) searchRef.current?.focus()
+  }, [searchMode])
 
   useEffect(() => {
     if (!user?.uid || !convo || convo.type === 'group') return
@@ -154,37 +158,42 @@ export default function ChatWindow() {
     try {
       const { callId, roomUrl, roomName } = await initiateCall({ callerId: user.uid, calleeId: otherUid, convId, type })
 
-      // Notify callee so they see the call even if the app is backgrounded
       sendCallNotification(otherUid, {
-        callerUid:   user.uid,
-        callerName:  user.displayName || 'Someone',
-        callerPhoto: user.photoURL    || '',
+        callerUid: user.uid,
+        callerName: user.displayName || 'Someone',
+        callerPhoto: user.photoURL || '',
         convId,
         callId,
         callType: type,
       }).catch(err => console.warn('Call notif failed:', err?.message))
 
       setActiveCall({
-        callId, isCaller: true, callType: type,
-        callerName: user.displayName || 'Me', callerPhoto: user.photoURL || null,
+        callId,
+        isCaller: true,
+        callType: type,
+        callerName: user.displayName || 'Me',
+        callerPhoto: user.photoURL || null,
         calleeName: convo.memberNames?.[otherUid] || 'Unknown',
         calleePhoto: convo.memberPhotos?.[otherUid] || null,
         calleeUid: otherUid,
-        roomUrl, roomName,
+        roomUrl,
+        roomName,
       })
-    } catch (err) { toast.error(err.message || 'Failed to start call') }
-    finally       { setStartingCall(false) }
+    } catch (err) {
+      toast.error(err.message || 'Failed to start call')
+    } finally {
+      setStartingCall(false)
+    }
   }, [convo, convId, user, activeCall])
 
-  // When caller cancels / call times out without answer, write a missed-call notif
   const handleCallTimeout = useCallback(async (calleeUid, callId, callType) => {
     if (!calleeUid) return
     try {
       await markCallMissed(callId)
       await sendMissedCallNotification(calleeUid, {
-        callerUid:   user.uid,
-        callerName:  user.displayName || 'Someone',
-        callerPhoto: user.photoURL    || '',
+        callerUid: user.uid,
+        callerName: user.displayName || 'Someone',
+        callerPhoto: user.photoURL || '',
         convId,
         callId,
         callType: callType || 'audio',
@@ -194,32 +203,39 @@ export default function ChatWindow() {
     }
   }, [user, convId])
 
-  const handleAnswerCall  = useCallback((incoming) => {
+  const handleAnswerCall = useCallback((incoming) => {
     setActiveCall({
-      callId: incoming.callId, isCaller: false, callType: incoming.type,
+      callId: incoming.callId,
+      isCaller: false,
+      callType: incoming.type,
       callerName: convo?.memberNames?.[incoming.callerId] || 'Someone',
       callerPhoto: convo?.memberPhotos?.[incoming.callerId] || null,
-      calleeName: user.displayName || 'Me', calleePhoto: user.photoURL || null,
+      calleeName: user.displayName || 'Me',
+      calleePhoto: user.photoURL || null,
     })
   }, [convo, user])
 
-  const handleDeclineCall = useCallback(async (callId) => { try { await declineCall(callId) } catch {} }, [])
-  const handleCallEnd     = useCallback(() => setActiveCall(null), [])
+  const handleDeclineCall = useCallback(async (callId) => {
+    try { await declineCall(callId) } catch {}
+  }, [])
 
-  const isGroup    = convo?.type === 'group'
-  const otherUid   = convo?.members?.find(uid => uid !== user.uid)
-  const chatName   = isGroup ? convo?.groupName : convo?.memberNames?.[otherUid] || 'Chat'
-  const chatPhoto  = isGroup ? convo?.groupPhoto : convo?.memberPhotos?.[otherUid]
+  const handleCallEnd = useCallback(() => setActiveCall(null), [])
+
+  const isGroup = convo?.type === 'group'
+  const otherUid = convo?.members?.find(uid => uid !== user.uid)
+  const chatName = isGroup ? convo?.groupName : convo?.memberNames?.[otherUid] || 'Chat'
+  const chatPhoto = isGroup ? convo?.groupPhoto : convo?.memberPhotos?.[otherUid]
   const avatarColor = getAvatarColor(chatName || '')
-  const isOnline   = !isGroup && presence?.status === 'online'
-  const isAway     = !isGroup && presence?.status === 'away'
-  const isMuted    = convo?.mutedBy?.includes(user?.uid)
-  const isPinned   = convo?.pinnedBy?.includes(user?.uid)
-  const isAdmin    = convo?.admins?.includes(user?.uid)
+  const isOnline = !isGroup && presence?.status === 'online'
+  const isAway = !isGroup && presence?.status === 'away'
+  const isMuted = convo?.mutedBy?.includes(user?.uid)
+  const isPinned = convo?.pinnedBy?.includes(user?.uid)
+  const isAdmin = convo?.admins?.includes(user?.uid)
 
   const statusText = isGroup
     ? `${convo?.members?.length || 0} members`
-    : isOnline ? 'Online' : isAway ? 'Away'
+    : isOnline ? 'Online'
+    : isAway ? 'Away'
     : presence?.lastSeen ? `Last seen ${formatLastSeen(presence.lastSeen)}` : 'Offline'
 
   const whoTyping = Object.keys(typingUsers || {})
@@ -275,7 +291,7 @@ export default function ChatWindow() {
 
       {searchMode && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: 'var(--bg-primary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <Search size={15} style={{ color: 'var(--text-tertiary)' }} />
+          <MagnifyingGlass size={15} style={{ color: 'var(--text-tertiary)' }} />
           <input
             ref={searchRef}
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: 14, color: 'var(--text-primary)' }}
@@ -325,26 +341,36 @@ export default function ChatWindow() {
         memberNames={convo?.memberNames || {}}
       />
 
-      {showInfo && (
-        <InfoPanel
-          convo={convo}
-          chatName={chatName}
-          chatPhoto={chatPhoto}
-          avatarColor={avatarColor}
-          isGroup={isGroup}
-          isAdmin={isAdmin}
-          isMuted={isMuted}
-          isPinned={isPinned}
-          currentUid={user.uid}
-          currentUser={user}
-          otherUid={otherUid}
-          onClose={() => setShowInfo(false)}
-          navigate={navigate}
-          onStartCall={startCall}
-          convId={convId}
-          onConvoUpdate={setConvo}
-        />
-      )}
+      <AnimatePresence>
+        {showInfo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ position: 'absolute', inset: 0, zIndex: 40, display: 'flex', justifyContent: 'flex-end' }}
+          >
+            <InfoPanel
+              convo={convo}
+              chatName={chatName}
+              chatPhoto={chatPhoto}
+              avatarColor={avatarColor}
+              isGroup={isGroup}
+              isAdmin={isAdmin}
+              isMuted={isMuted}
+              isPinned={isPinned}
+              currentUid={user.uid}
+              currentUser={user}
+              otherUid={otherUid}
+              onClose={() => setShowInfo(false)}
+              navigate={navigate}
+              onStartCall={startCall}
+              convId={convId}
+              onConvoUpdate={setConvo}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {activeCall && <CallScreen {...activeCall} currentUser={user} onEnd={handleCallEnd} />}
     </div>
@@ -360,13 +386,13 @@ function TBtn({ icon, onClick, title, disabled }) {
 }
 
 function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, isMuted, isPinned, currentUid, currentUser, otherUid, onClose, navigate, onStartCall, convId, onConvoUpdate }) {
-  const [modal,          setModal]          = useState(null)
-  const [announceText,   setAnnounceText]   = useState('')
-  const [renameText,     setRenameText]     = useState(convo?.groupName || '')
-  const [nickname,       setNickname]       = useState(convo?.nicknames?.[otherUid] || '')
+  const [announceText, setAnnounceText] = useState('')
+  const [renameText, setRenameText] = useState(convo?.groupName || '')
+  const [nickname, setNickname] = useState(convo?.nicknames?.[otherUid] || '')
   const [selectedMember, setSelectedMember] = useState(null)
-  const [loading,        setLoading]        = useState(false)
-  const [otherProfile,   setOtherProfile]   = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [otherProfile, setOtherProfile] = useState(null)
+  const [modal, setModal] = useState(null)
 
   useEffect(() => {
     if (isGroup || !otherUid) return
@@ -387,7 +413,9 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           : [...(prev.mutedBy || []), currentUid],
       }))
       toast.success(isMuted ? 'Notifications unmuted' : 'Notifications muted')
-    } catch { toast.error('Failed') }
+    } catch {
+      toast.error('Failed')
+    }
   }
 
   async function handleTogglePin() {
@@ -400,7 +428,9 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           : [...(prev.pinnedBy || []), currentUid],
       }))
       toast.success(isPinned ? 'Unpinned' : 'Pinned to top')
-    } catch { toast.error('Failed') }
+    } catch {
+      toast.error('Failed')
+    }
   }
 
   async function handleBlockToggle() {
@@ -414,7 +444,9 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
         toast.success('User blocked')
       }
       setModal(null)
-    } catch { toast.error('Failed') }
+    } catch {
+      toast.error('Failed')
+    }
   }
 
   async function handleSaveNickname() {
@@ -425,8 +457,11 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
       onConvoUpdate(prev => ({ ...prev, nicknames }))
       toast.success('Nickname saved')
       setModal(null)
-    } catch { toast.error('Failed') }
-    finally   { setLoading(false) }
+    } catch {
+      toast.error('Failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleDeleteConversation() {
@@ -434,16 +469,21 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
     try {
       const msgsSnap = await getDocs(collection(db, 'conversations', convId, 'messages'))
       const batchSize = 450
+
       for (let i = 0; i < msgsSnap.docs.length; i += batchSize) {
         const { writeBatch: wb } = await import('firebase/firestore')
         const batch = wb(db)
         msgsSnap.docs.slice(i, i + batchSize).forEach(d => batch.delete(d.ref))
         await batch.commit()
       }
+
       await deleteDoc(doc(db, 'conversations', convId))
       toast.success('Conversation deleted')
       navigate('/app/chats', { replace: true })
-    } catch { toast.error('Failed to delete'); setLoading(false) }
+    } catch {
+      toast.error('Failed to delete')
+      setLoading(false)
+    }
   }
 
   async function handleSendAnnouncement() {
@@ -454,8 +494,11 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
       setAnnounceText('')
       setModal(null)
       toast.success('Announcement sent!')
-    } catch (err) { toast.error(err.message || 'Failed') }
-    finally        { setLoading(false) }
+    } catch (err) {
+      toast.error(err.message || 'Failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleRenameGroup() {
@@ -466,8 +509,11 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
       onConvoUpdate(prev => ({ ...prev, groupName: renameText.trim() }))
       toast.success('Group renamed')
       setModal(null)
-    } catch { toast.error('Failed') }
-    finally   { setLoading(false) }
+    } catch {
+      toast.error('Failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleLeaveGroup() {
@@ -476,7 +522,10 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
       await leaveGroup(convId, currentUid)
       toast.success('You left the group')
       navigate('/app/chats', { replace: true })
-    } catch (err) { toast.error(err.message || 'Failed'); setLoading(false) }
+    } catch (err) {
+      toast.error(err.message || 'Failed')
+      setLoading(false)
+    }
   }
 
   async function handleRemoveMember(uid) {
@@ -487,8 +536,11 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
       toast.success('Member removed')
       setSelectedMember(null)
       setModal(null)
-    } catch (err) { toast.error(err.message || 'Failed') }
-    finally        { setLoading(false) }
+    } catch (err) {
+      toast.error(err.message || 'Failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleToggleAdmin(uid) {
@@ -504,15 +556,38 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           : [...(prev.admins || []), uid],
       }))
       toast.success(isCurrentlyAdmin ? 'Admin removed' : 'Made admin')
-    } catch { toast.error('Failed') }
+    } catch {
+      toast.error('Failed')
+    }
   }
 
   const nickname_display = convo?.nicknames?.[otherUid]
 
   return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 40, display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
-      <div style={{ width: 300, height: '100%', overflowY: 'auto', background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)', boxShadow: '-4px 0 20px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 40,
+        display: 'flex',
+        justifyContent: 'flex-end',
+        background: 'rgba(0,0,0,0.4)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          width: 300,
+          height: '100%',
+          overflowY: 'auto',
+          background: 'var(--bg-primary)',
+          borderLeft: '1px solid var(--border)',
+          boxShadow: '-4px 0 20px rgba(0,0,0,0.2)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <p style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)', margin: 0 }}>
             {isGroup ? 'Group Info' : 'Contact Info'}
@@ -541,41 +616,50 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
 
         {!isGroup && (
           <div style={{ display: 'flex', gap: 8, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-            <QuickBtn icon="call"     label="Voice" onClick={() => { onClose(); onStartCall('audio') }} />
+            <QuickBtn icon="call" label="Voice" onClick={() => { onClose(); onStartCall('audio') }} />
             <QuickBtn icon="videocam" label="Video" onClick={() => { onClose(); onStartCall('video') }} />
           </div>
         )}
 
         <div style={{ padding: '8px 8px', borderBottom: '1px solid var(--border)' }}>
           <PanelLabel label="Actions" />
-          <PanelRow icon={isPinned ? PinOff : Pin} label={isPinned ? 'Unpin chat' : 'Pin chat'} onClick={handleTogglePin} />
-          <PanelRow icon={isMuted ? Bell : BellOff} label={isMuted ? 'Unmute notifications' : 'Mute notifications'} onClick={handleToggleMute} />
-          {!isGroup && <PanelRow icon={Pencil} label="Set nickname" onClick={() => setModal('nickname')} />}
+          <PanelRow icon={isPinned ? PushPinSlash : PushPin} label={isPinned ? 'Unpin chat' : 'Pin chat'} onClick={handleTogglePin} />
+          <PanelRow icon={isMuted ? Bell : BellSlash} label={isMuted ? 'Unmute notifications' : 'Mute notifications'} onClick={handleToggleMute} />
+          {!isGroup && <PanelRow icon={PencilSimple} label="Set nickname" onClick={() => setModal('nickname')} />}
           {isGroup && isAdmin && <PanelRow icon={Megaphone} label="Send announcement" onClick={() => setModal('announce')} />}
-          {isGroup && isAdmin && <PanelRow icon={Pencil} label="Rename group" onClick={() => setModal('rename')} />}
-          {isGroup && <PanelRow icon={Settings} label="Manage group" onClick={() => { onClose(); navigate(`/app/group/${convId}`) }} />}
+          {isGroup && isAdmin && <PanelRow icon={PencilSimple} label="Rename group" onClick={() => setModal('rename')} />}
+          {isGroup && <PanelRow icon={Gear} label="Manage group" onClick={() => { onClose(); navigate(`/app/group/${convId}`) }} />}
         </div>
 
         <div style={{ padding: '8px 8px', borderBottom: '1px solid var(--border)' }}>
           <PanelLabel label="Danger" />
           {!isGroup && (
-            <PanelRow icon={UserX} label={isBlocked ? 'Unblock user' : 'Block user'} danger onClick={() => setModal('block')} />
+            <PanelRow icon={Prohibit} label={isBlocked ? 'Unblock user' : 'Block user'} danger onClick={() => setModal('block')} />
           )}
-          <PanelRow icon={Trash2} label="Delete conversation" danger onClick={() => setModal('delete')} />
-          {isGroup && <PanelRow icon={LogOut} label="Leave group" danger onClick={() => setModal('leave')} />}
+          <PanelRow icon={Trash} label="Delete conversation" danger onClick={() => setModal('delete')} />
+          {isGroup && <PanelRow icon={SignOut} label="Leave group" danger onClick={() => setModal('leave')} />}
         </div>
 
         {isGroup && convo.members && (
           <div style={{ padding: '8px' }}>
             <PanelLabel label={`Members (${convo.members.length})`} />
             {convo.members.map(uid => {
-              const ac      = getAvatarColor(convo.memberNames?.[uid] || '')
-              const isOwn   = uid === currentUid
+              const ac = getAvatarColor(convo.memberNames?.[uid] || '')
+              const isOwn = uid === currentUid
               const memAdmin = convo.admins?.includes(uid)
-              const photo   = convo.memberPhotos?.[uid]
+              const photo = convo.memberPhotos?.[uid]
+
               return (
-                <div key={uid}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, cursor: isAdmin && !isOwn ? 'pointer' : 'default' }}
+                <div
+                  key={uid}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 10px',
+                    borderRadius: 12,
+                    cursor: isAdmin && !isOwn ? 'pointer' : 'default',
+                  }}
                   onClick={() => isAdmin && !isOwn && setSelectedMember(uid === selectedMember ? null : uid)}
                   onMouseEnter={e => isAdmin && !isOwn && (e.currentTarget.style.background = 'var(--bg-secondary)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -590,17 +674,53 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
                     </p>
                     {memAdmin && <p style={{ margin: 0, fontSize: 11, color: 'var(--primary)', fontWeight: 700 }}>Admin</p>}
                   </div>
-                  {isAdmin && !isOwn && <ChevronRight size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
+                  {isAdmin && !isOwn && <CaretRight size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
                 </div>
               )
             })}
+
             {selectedMember && isAdmin && (
               <div style={{ margin: '4px 0 8px', padding: '8px', borderRadius: 14, background: 'var(--bg-secondary)', border: '1px solid var(--border)', display: 'flex', gap: 6 }}>
-                <button onClick={() => handleToggleAdmin(selectedMember)} style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 11, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                <button
+                  onClick={() => handleToggleAdmin(selectedMember)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 0',
+                    borderRadius: 10,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-primary)',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 4,
+                  }}
+                >
                   <Crown size={12} color="var(--primary)" />
                   {convo.admins?.includes(selectedMember) ? 'Remove admin' : 'Make admin'}
                 </button>
-                <button onClick={() => setModal('removeMember')} style={{ flex: 1, padding: '8px 0', borderRadius: 10, border: '1px solid #fca5a5', background: '#fee2e2', color: '#b91c1c', fontSize: 11, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+
+                <button
+                  onClick={() => setModal('removeMember')}
+                  style={{
+                    flex: 1,
+                    padding: '8px 0',
+                    borderRadius: 10,
+                    border: '1px solid #fca5a5',
+                    background: '#fee2e2',
+                    color: '#b91c1c',
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 4,
+                  }}
+                >
                   <UserMinus size={12} />
                   Remove
                 </button>
@@ -610,85 +730,244 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
         )}
       </div>
 
-      {modal && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }} onClick={() => !loading && setModal(null)}>
-          <div style={{ width: 'min(420px,100%)', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg-primary)', padding: 20, boxShadow: '0 24px 60px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+      <AnimatePresence>
+        {modal && (
+          <motion.div
+            style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={() => !loading && setModal(null)}
+          >
+            <motion.div
+              style={{ width: 'min(420px,100%)', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg-primary)', padding: 20, boxShadow: '0 24px 60px rgba(0,0,0,0.4)' }}
+              onClick={e => e.stopPropagation()}
+              initial={{ y: 20, opacity: 0, scale: 0.95 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 10, opacity: 0, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+            >
+              {modal === 'announce' && (
+                <>
+                  <ModalH title="📢 Send Announcement" onClose={() => setModal(null)} />
+                  <p style={{ margin: '6px 0 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>This will be highlighted and notify all members</p>
+                  <textarea
+                    value={announceText}
+                    onChange={e => setAnnounceText(e.target.value)}
+                    placeholder="Write your announcement…"
+                    maxLength={500}
+                    rows={4}
+                    style={{ width: '100%', padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
+                  />
+                  <p style={{ margin: '4px 0 12px', fontSize: 11, textAlign: 'right', color: 'var(--text-tertiary)' }}>{announceText.length}/500</p>
+                  <ModalBtn label={loading ? 'Sending…' : 'Send Announcement'} disabled={loading} onClick={handleSendAnnouncement} />
+                </>
+              )}
 
-            {modal === 'announce' && (
-              <>
-                <ModalH title="📢 Send Announcement" onClose={() => setModal(null)} />
-                <p style={{ margin: '6px 0 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>This will be highlighted and notify all members</p>
-                <textarea value={announceText} onChange={e => setAnnounceText(e.target.value)} placeholder="Write your announcement…" maxLength={500} rows={4} style={{ width: '100%', padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', resize: 'none', boxSizing: 'border-box' }} />
-                <p style={{ margin: '4px 0 12px', fontSize: 11, textAlign: 'right', color: 'var(--text-tertiary)' }}>{announceText.length}/500</p>
-                <ModalBtn label={loading ? 'Sending…' : 'Send Announcement'} disabled={loading} onClick={handleSendAnnouncement} />
-              </>
-            )}
+              {modal === 'rename' && (
+                <>
+                  <ModalH title="Rename Group" onClose={() => setModal(null)} />
+                  <input
+                    value={renameText}
+                    onChange={e => setRenameText(e.target.value)}
+                    placeholder="Group name"
+                    maxLength={50}
+                    style={{ width: '100%', marginTop: 12, padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <ModalBtn label={loading ? 'Saving…' : 'Save Name'} disabled={loading} onClick={handleRenameGroup} />
+                </>
+              )}
 
-            {modal === 'rename' && (
-              <>
-                <ModalH title="Rename Group" onClose={() => setModal(null)} />
-                <input value={renameText} onChange={e => setRenameText(e.target.value)} placeholder="Group name" maxLength={50} style={{ width: '100%', marginTop: 12, padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} />
-                <ModalBtn label={loading ? 'Saving…' : 'Save Name'} disabled={loading} onClick={handleRenameGroup} />
-              </>
-            )}
+              {modal === 'nickname' && (
+                <>
+                  <ModalH title="Set Nickname" onClose={() => setModal(null)} />
+                  <p style={{ margin: '6px 0 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>Only you can see this nickname</p>
+                  <input
+                    value={nickname}
+                    onChange={e => setNickname(e.target.value)}
+                    placeholder={`Nickname for ${chatName}`}
+                    maxLength={30}
+                    style={{ width: '100%', padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <ModalBtn label={loading ? 'Saving…' : 'Save Nickname'} disabled={loading} onClick={handleSaveNickname} />
+                </>
+              )}
 
-            {modal === 'nickname' && (
-              <>
-                <ModalH title="Set Nickname" onClose={() => setModal(null)} />
-                <p style={{ margin: '6px 0 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>Only you can see this nickname</p>
-                <input value={nickname} onChange={e => setNickname(e.target.value)} placeholder={`Nickname for ${chatName}`} maxLength={30} style={{ width: '100%', padding: '12px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} />
-                <ModalBtn label={loading ? 'Saving…' : 'Save Nickname'} disabled={loading} onClick={handleSaveNickname} />
-              </>
-            )}
+              {modal === 'block' && (
+                <>
+                  <ModalH title={isBlocked ? 'Unblock User' : 'Block User'} onClose={() => setModal(null)} />
+                  <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>
+                    {isBlocked
+                      ? `Unblocking ${chatName} will allow them to send you messages again.`
+                      : `Blocking ${chatName} will prevent them from messaging you. You can unblock them anytime.`}
+                  </p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => setModal(null)}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleBlockToggle}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid #b91c1c',
+                        background: '#b91c1c',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {isBlocked ? 'Unblock' : 'Block'}
+                    </button>
+                  </div>
+                </>
+              )}
 
-            {modal === 'block' && (
-              <>
-                <ModalH title={isBlocked ? 'Unblock User' : 'Block User'} onClose={() => setModal(null)} />
-                <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>
-                  {isBlocked ? `Unblocking ${chatName} will allow them to send you messages again.` : `Blocking ${chatName} will prevent them from messaging you. You can unblock them anytime.`}
-                </p>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => setModal(null)} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={handleBlockToggle} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}>{isBlocked ? 'Unblock' : 'Block'}</button>
-                </div>
-              </>
-            )}
+              {modal === 'delete' && (
+                <>
+                  <ModalH title="Delete Conversation" onClose={() => !loading && setModal(null)} />
+                  <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>This will permanently delete all messages. This cannot be undone.</p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => setModal(null)}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleDeleteConversation}
+                      disabled={loading}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid #b91c1c',
+                        background: '#b91c1c',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {loading ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </>
+              )}
 
-            {modal === 'delete' && (
-              <>
-                <ModalH title="Delete Conversation" onClose={() => !loading && setModal(null)} />
-                <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>This will permanently delete all messages. This cannot be undone.</p>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => setModal(null)} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={handleDeleteConversation} disabled={loading} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}>{loading ? 'Deleting…' : 'Delete'}</button>
-                </div>
-              </>
-            )}
+              {modal === 'leave' && (
+                <>
+                  <ModalH title="Leave Group" onClose={() => !loading && setModal(null)} />
+                  <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>You will leave "{convo?.groupName}" and won't receive new messages.</p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => setModal(null)}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleLeaveGroup}
+                      disabled={loading}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid #b91c1c',
+                        background: '#b91c1c',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {loading ? 'Leaving…' : 'Leave Group'}
+                    </button>
+                  </div>
+                </>
+              )}
 
-            {modal === 'leave' && (
-              <>
-                <ModalH title="Leave Group" onClose={() => !loading && setModal(null)} />
-                <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>You will leave "{convo?.groupName}" and won't receive new messages.</p>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => setModal(null)} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={handleLeaveGroup} disabled={loading} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}>{loading ? 'Leaving…' : 'Leave Group'}</button>
-                </div>
-              </>
-            )}
-
-            {modal === 'removeMember' && selectedMember && (
-              <>
-                <ModalH title="Remove Member" onClose={() => { setModal(null); setSelectedMember(null) }} />
-                <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>Remove <strong>{convo.memberNames?.[selectedMember] || 'this member'}</strong> from the group?</p>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => { setModal(null); setSelectedMember(null) }} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => handleRemoveMember(selectedMember)} disabled={loading} style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}>{loading ? 'Removing…' : 'Remove'}</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+              {modal === 'removeMember' && selectedMember && (
+                <>
+                  <ModalH title="Remove Member" onClose={() => { setModal(null); setSelectedMember(null) }} />
+                  <p style={{ margin: '10px 0 16px', fontSize: 13, color: 'var(--text-secondary)' }}>Remove <strong>{convo.memberNames?.[selectedMember] || 'this member'}</strong> from the group?</p>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => { setModal(null); setSelectedMember(null) }}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-secondary)',
+                        color: 'var(--text-primary)',
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => handleRemoveMember(selectedMember)}
+                      disabled={loading}
+                      style={{
+                        flex: 1,
+                        padding: '11px',
+                        borderRadius: 12,
+                        border: '1px solid #b91c1c',
+                        background: '#b91c1c',
+                        color: '#fff',
+                        fontSize: 13,
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {loading ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -699,7 +978,23 @@ function PanelLabel({ label }) {
 
 function PanelRow({ icon: Icon, label, onClick, danger }) {
   return (
-    <button onClick={onClick} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 12, border: 'none', background: 'transparent', cursor: 'pointer', color: danger ? '#ef4444' : 'var(--text-primary)', fontSize: 13, fontWeight: 600, textAlign: 'left' }}
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 12px',
+        borderRadius: 12,
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        color: danger ? '#ef4444' : 'var(--text-primary)',
+        fontSize: 13,
+        fontWeight: 600,
+        textAlign: 'left',
+      }}
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
     >
@@ -711,7 +1006,24 @@ function PanelRow({ icon: Icon, label, onClick, danger }) {
 
 function QuickBtn({ icon, label, onClick }) {
   return (
-    <button onClick={onClick} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        padding: '9px',
+        borderRadius: 12,
+        border: '1px solid var(--border)',
+        background: 'var(--bg-secondary)',
+        color: 'var(--text-primary)',
+        fontSize: 13,
+        fontWeight: 700,
+        cursor: 'pointer',
+      }}
+    >
       <span className="material-icons" style={{ fontSize: 16 }}>{icon}</span>
       {label}
     </button>
@@ -731,7 +1043,23 @@ function ModalH({ title, onClose }) {
 
 function ModalBtn({ label, onClick, disabled }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ width: '100%', marginTop: 14, padding: '12px', borderRadius: 13, border: 'none', background: 'var(--primary)', color: '#fff', fontSize: 14, fontWeight: 900, cursor: 'pointer', opacity: disabled ? 0.6 : 1 }}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: '100%',
+        marginTop: 14,
+        padding: '12px',
+        borderRadius: 13,
+        border: 'none',
+        background: 'var(--primary)',
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: 900,
+        cursor: 'pointer',
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
       {label}
     </button>
   )

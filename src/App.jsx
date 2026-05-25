@@ -1,15 +1,18 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { Toaster } from 'react-hot-toast'
 import { Outlet, useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
+import { motion } from 'framer-motion'
 import { onForegroundMessage } from './services/notificationService'
 import {
-  AtSign, Bell, Heart, MessageCircle, Megaphone,
-  Phone, PhoneMissed, UserCheck, UserPlus, Users, Video,
-} from 'lucide-react'
+  At, Bell, HeartStraight, ChatCircle, Megaphone,
+  Phone, PhoneX, UserCheck, UserPlus, Users, VideoCamera,
+} from '@phosphor-icons/react'
 
 function FcmToast({ children, onClick, duration = 10000 }) {
   const [progress, setProgress] = React.useState(100)
+  const progressRef = useRef(progress)
+  progressRef.current = progress
 
   useEffect(() => {
     const start = Date.now()
@@ -30,8 +33,12 @@ function FcmToast({ children, onClick, duration = 10000 }) {
                     '#ef4444'
 
   return (
-    <div
+    <motion.div
       onClick={onClick}
+      initial={{ y: -20, opacity: 0, scale: 0.95 }}
+      animate={{ y: 0, opacity: 1, scale: 1 }}
+      exit={{ y: -10, opacity: 0, scale: 0.95 }}
+      transition={{ type: 'spring', stiffness: 350, damping: 25 }}
       style={{
         background: 'var(--bg-primary)',
         border: '1px solid var(--border)',
@@ -48,19 +55,23 @@ function FcmToast({ children, onClick, duration = 10000 }) {
         cursor: 'pointer',
         overflow: 'hidden',
       }}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
     >
       <div style={{ display: 'flex', gap: '12px', alignItems: 'center', paddingBottom: '10px' }}>
         {children}
       </div>
       <div style={{ height: '3px', background: 'var(--border)', marginLeft: '-16px', marginRight: '-16px' }}>
-        <div style={{
-          height: '100%',
-          width: `${progress}%`,
-          background: barColor,
-          transition: 'background 0.5s ease',
-        }} />
+        <motion.div
+          style={{
+            height: '100%',
+            background: barColor,
+          }}
+          animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.3, ease: 'easeOut' }}
+        />
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -77,21 +88,21 @@ export default function App() {
         const isVideo = data.callType === 'video'
         const toastDuration = type === 'call' ? 30000 : 10000
 
-        const getIcon = () => {
+                const getIcon = () => {
           switch (type) {
-            case 'message':         return <MessageCircle size={18} style={{ color: '#60a5fa' }} />
-            case 'media':           return <MessageCircle size={18} style={{ color: '#60a5fa' }} />
-            case 'reaction':        return <Heart         size={18} style={{ color: '#f472b6' }} />
-            case 'mention':         return <AtSign        size={18} style={{ color: '#a78bfa' }} />
-            case 'announce':        return <Megaphone     size={18} style={{ color: '#fb923c' }} />
-            case 'friend_request':  return <UserPlus      size={18} style={{ color: '#34d399' }} />
-            case 'friend_accepted': return <UserCheck     size={18} style={{ color: '#34d399' }} />
-            case 'group_invite':    return <Users         size={18} style={{ color: '#a78bfa' }} />
+            case 'message':         return <ChatCircle   size={18} weight="fill" style={{ color: '#60a5fa' }} />
+            case 'media':           return <ChatCircle   size={18} weight="fill" style={{ color: '#60a5fa' }} />
+            case 'reaction':        return <HeartStraight size={18} weight="fill" style={{ color: '#f472b6' }} />
+            case 'mention':         return <At           size={18} weight="fill" style={{ color: '#a78bfa' }} />
+            case 'announce':        return <Megaphone     size={18} weight="fill" style={{ color: '#fb923c' }} />
+            case 'friend_request':  return <UserPlus      size={18} weight="fill" style={{ color: '#34d399' }} />
+            case 'friend_accepted': return <UserCheck     size={18} weight="fill" style={{ color: '#34d399' }} />
+            case 'group_invite':    return <Users         size={18} weight="fill" style={{ color: '#a78bfa' }} />
             case 'call':            return isVideo
-              ? <Video     size={18} style={{ color: '#60a5fa' }} />
-              : <Phone     size={18} style={{ color: '#60a5fa' }} />
-            case 'missed_call':     return <PhoneMissed  size={18} style={{ color: '#ef4444' }} />
-            default:                return <Bell         size={18} style={{ color: '#60a5fa' }} />
+              ? <VideoCamera size={18} weight="fill" style={{ color: '#60a5fa' }} />
+              : <Phone       size={18} weight="fill" style={{ color: '#60a5fa' }} />
+            case 'missed_call':     return <PhoneX       size={18} weight="fill" style={{ color: '#ef4444' }} />
+            default:                return <Bell         size={18} weight="fill" style={{ color: '#60a5fa' }} />
           }
         }
 

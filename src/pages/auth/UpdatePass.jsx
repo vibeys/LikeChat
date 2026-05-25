@@ -4,7 +4,7 @@ import { useNavigate, Link } from 'react-router'
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth'
 import { auth } from '../../lib/firebase'
 import { Button, Input } from '../../components/UI'
-import { Eye, EyeOff, ArrowLeft, ShieldCheck } from 'lucide-react'
+import { Eye, EyeSlash, ArrowLeft, ShieldCheck } from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 export default function UpdatePass() {
@@ -94,7 +94,7 @@ export default function UpdatePass() {
                     onClick={() => setShowPass(v => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2"
                     style={{ color: 'var(--text-3)' }}>
-                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showPass ? <EyeSlash size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
               </div>
@@ -116,7 +116,7 @@ export default function UpdatePass() {
                     onClick={() => setShowConfirm(v => !v)}
                     className="absolute right-3 top-1/2 -translate-y-1/2"
                     style={{ color: 'var(--text-3)' }}>
-                    {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showConfirm ? <EyeSlash size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
 

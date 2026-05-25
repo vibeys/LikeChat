@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { sendReset } from '../../services/authService'
 import { Button, Input } from '../../components/UI'
-import { ArrowLeft, Mail } from 'lucide-react'
+import { ArrowLeft, Envelope } from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
 export default function ForgotPass() {
@@ -79,7 +79,7 @@ export default function ForgotPass() {
           <div className="text-center py-4">
             <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
                  style={{ background: 'var(--accent-muted)' }}>
-              <Mail size={28} style={{ color: 'var(--accent)' }} />
+              <Envelope size={28} style={{ color: 'var(--accent)' }} />
             </div>
             <h2 className="text-xl font-semibold mb-2"
                 style={{ color: 'var(--text-1)' }}>Check your inbox</h2>

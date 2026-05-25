@@ -1,4 +1,10 @@
 import { format, isToday, isYesterday } from 'date-fns'
+import { clsx } from 'clsx'
+import { twMerge } from 'tailwind-merge'
+
+export function cn(...inputs) {
+  return twMerge(clsx(inputs))
+}
 
 const AVATAR_COLORS = [
   { bg: '#dbeafe', text: '#1d4ed8' },

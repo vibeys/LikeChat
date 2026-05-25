@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, UserPlus, Check } from 'lucide-react'
+import { MagnifyingGlass, UserPlus, Check } from '@phosphor-icons/react'
 import { searchByUsername } from '../services/userService'
 import { sendFriendRequest } from '../services/friendService'
 import { Avatar } from './UI'
@@ -43,7 +43,7 @@ export default function UserSearch({ currentUid }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search
+                    <MagnifyingGlass
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]"
           />

@@ -1,6 +1,6 @@
 // src/components/MessageInput.jsx
 import { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, Smile, X, Image, Video, File, Megaphone, AtSign } from 'lucide-react'
+import { PaperPlaneRight, Paperclip, Smiley, X, Image, Video, File, Megaphone, At } from '@phosphor-icons/react'
 import { setTyping } from '../lib/typing'
 import { sendMessage, uploadFile, sendAnnouncement, sendMentionNotif } from '../services/chatService'
 import { debounce } from '../lib/utils'
@@ -254,10 +254,10 @@ export default function MessageInput({
       <input ref={fileRef}  type="file" accept=".pdf,.doc,.docx,.txt,.zip,.xlsx,.pptx" className="hidden" onChange={e => handleFileUpload(e, 'file')} />
 
       <div className="flex items-end gap-2">
-        <button data-picker onClick={() => { setShowEmoji(s => !s); setShowAttach(false) }}
+                <button data-picker onClick={() => { setShowEmoji(s => !s); setShowAttach(false) }}
                 className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
                 style={{ color: showEmoji ? 'var(--accent)' : 'var(--text-3)', background: showEmoji ? 'var(--bg-2)' : 'transparent' }}>
-          <Smile size={20} />
+          <Smiley size={20} />
         </button>
 
         <button data-picker onClick={() => { setShowAttach(s => !s); setShowEmoji(false) }}
@@ -276,9 +276,9 @@ export default function MessageInput({
                       textareaRef.current?.setSelectionRange(pos + 1, pos + 1)
                     }, 0)
                   }}
-                  className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
+                                    className="p-2 transition-all duration-150 hover:scale-110 active:scale-95 rounded-lg shrink-0"
                   style={{ color: 'var(--text-3)' }} title="Mention someone">
-            <AtSign size={20} />
+            <At size={20} />
           </button>
         )}
 
@@ -302,11 +302,11 @@ export default function MessageInput({
           style={{ background: 'var(--bg-2)', color: 'var(--text-1)', lineHeight: '1.5', maxHeight: '128px', minHeight: '40px' }}
         />
 
-        <button onClick={handleSend}
+                <button onClick={handleSend}
                 disabled={loading || !text.trim()}
                 className="p-2.5 text-white rounded-full transition-all duration-150 shrink-0 hover:scale-110 active:scale-95"
                 style={{ background: accentColor, opacity: loading || !text.trim() ? 0.4 : 1, cursor: loading || !text.trim() ? 'not-allowed' : 'pointer' }}>
-          <Send size={16} />
+          <PaperPlaneRight size={16} />
         </button>
       </div>
     </div>
