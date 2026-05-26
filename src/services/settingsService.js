@@ -1,8 +1,9 @@
 // src/services/settingsService.js
-// ─── Dedicated settings service – handles all user settings operations ────────
+// Dedicated settings service for user preferences and account settings.
 
 import {
   doc,
+  setDoc,
   updateDoc,
   arrayRemove,
   collection,
@@ -19,8 +20,85 @@ import {
 import { db } from '../lib/firebase'
 import { getUser } from './userService'
 
-// ─── PASSWORD ────────────────────────────────────────────────────────────────
+export const DEFAULT_PRIVACY = {
+  profileVisible: 'everyone',
+  showLastSeen: true,
+  showOnlineStatus: true,
+  allowFriendReqs: true,
+  readReceipts: true,
+}
 
+export const DEFAULT_NOTIFICATIONS = {
+  messages: true,
+  mentions: true,
+  friendReqs: true,
+  appUpdates: false,
+  sound: true,
+}
+
+const THEME_KEY = 'lc_theme'
+
+function asBoolean(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+export function sanitizePrivacy(privacy = {}) {
+  const profileVisible = ['everyone', 'friends', 'nobody'].includes(privacy.profileVisible)
+    ? privacy.profileVisible
+    : DEFAULT_PRIVACY.profileVisible
+
+  return {
+    profileVisible,
+    showLastSeen: asBoolean(privacy.showLastSeen, DEFAULT_PRIVACY.showLastSeen),
+    showOnlineStatus: asBoolean(privacy.showOnlineStatus, DEFAULT_PRIVACY.showOnlineStatus),
+    allowFriendReqs: asBoolean(privacy.allowFriendReqs, DEFAULT_PRIVACY.allowFriendReqs),
+    readReceipts: asBoolean(privacy.readReceipts, DEFAULT_PRIVACY.readReceipts),
+  }
+}
+
+export function sanitizeNotifications(notifications = {}) {
+  return {
+    messages: asBoolean(notifications.messages, DEFAULT_NOTIFICATIONS.messages),
+    mentions: asBoolean(notifications.mentions, DEFAULT_NOTIFICATIONS.mentions),
+    friendReqs: asBoolean(notifications.friendReqs, DEFAULT_NOTIFICATIONS.friendReqs),
+    appUpdates: asBoolean(notifications.appUpdates, DEFAULT_NOTIFICATIONS.appUpdates),
+    sound: asBoolean(notifications.sound, DEFAULT_NOTIFICATIONS.sound),
+  }
+}
+
+export function shouldDeliverNotification(notificationPrefs = {}, type = 'message') {
+  const prefs = sanitizeNotifications(notificationPrefs)
+
+  switch (type) {
+    case 'message':
+    case 'media':
+    case 'reaction':
+      return prefs.messages
+    case 'mention':
+      return prefs.mentions
+    case 'friend_request':
+    case 'friend_accepted':
+    case 'group_invite':
+      return prefs.friendReqs
+    case 'announce':
+      return prefs.appUpdates
+    case 'call':
+    case 'missed_call':
+      return true
+    default:
+      return true
+  }
+}
+
+export function canShowOnlineStatus(userData) {
+  return sanitizePrivacy(userData?.privacy).showOnlineStatus
+}
+
+export function canShowProfilePhoto(userData) {
+  return sanitizePrivacy(userData?.privacy).profileVisible !== 'nobody'
+}
+
+// PASSWORD
 export async function changePassword(currentPassword, newPassword) {
   const auth = getAuth()
   const firebaseUser = auth.currentUser
@@ -31,27 +109,24 @@ export async function changePassword(currentPassword, newPassword) {
   await updatePassword(firebaseUser, newPassword)
 }
 
-// ─── PRIVACY ─────────────────────────────────────────────────────────────────
-
+// PRIVACY
 export async function savePrivacySettings(uid, privacy) {
-  await updateDoc(doc(db, 'users', uid), { privacy })
+  if (!uid) throw new Error('Missing user id')
+  await setDoc(doc(db, 'users', uid), { privacy: sanitizePrivacy(privacy) }, { merge: true })
 }
 
-// ─── NOTIFICATIONS ───────────────────────────────────────────────────────────
-
+// NOTIFICATIONS
 export async function saveNotificationPrefs(uid, notifications) {
-  await updateDoc(doc(db, 'users', uid), { notifications })
+  if (!uid) throw new Error('Missing user id')
+  await setDoc(doc(db, 'users', uid), { notifications: sanitizeNotifications(notifications) }, { merge: true })
 }
 
-// ─── BLOCKED USERS ───────────────────────────────────────────────────────────
-
+// BLOCKED USERS
 export async function loadBlockedProfiles(uid) {
   const userSnap = await getUser(uid)
   const blockedUids = userSnap?.blockedUsers || []
   if (!blockedUids.length) return []
-  const profiles = await Promise.all(
-    blockedUids.map(buid => getUser(buid))
-  )
+  const profiles = await Promise.all(blockedUids.map(buid => getUser(buid)))
   return profiles.filter(Boolean)
 }
 
@@ -61,8 +136,7 @@ export async function unblockUser(uid, theirUid) {
   })
 }
 
-// ─── ACCOUNT STATS ───────────────────────────────────────────────────────────
-
+// ACCOUNT STATS
 export async function fetchAccountStats(uid) {
   let messagesSent = 0
   let friendsCount = 0
@@ -71,6 +145,7 @@ export async function fetchAccountStats(uid) {
     const convsSnap = await getDocs(
       query(collection(db, 'conversations'), where('members', 'array-contains', uid))
     )
+
     const counts = await Promise.all(
       convsSnap.docs.map(async convDoc => {
         const msgsSnap = await getDocs(
@@ -82,28 +157,41 @@ export async function fetchAccountStats(uid) {
         return msgsSnap.size
       })
     )
-    messagesSent = counts.reduce((a, b) => a + b, 0)
-  } catch (_) {}
+
+    messagesSent = counts.reduce((sum, count) => sum + count, 0)
+  } catch (err) {
+    console.warn('fetchAccountStats messages error:', err?.message || err)
+  }
 
   try {
     const friendsSnap = await getDocs(
       query(collection(db, 'friends', uid, 'list'), where('status', '==', 'accepted'))
     )
     friendsCount = friendsSnap.size
-  } catch (_) {}
+  } catch (err) {
+    console.warn('fetchAccountStats friends error:', err?.message || err)
+  }
 
   return { messagesSent, friendsCount }
 }
 
-// ─── THEME ───────────────────────────────────────────────────────────────────
-
+// THEME
 export function getInitialTheme() {
-  return document.documentElement.getAttribute('data-theme') !== 'light'
+  if (typeof window === 'undefined') return false
+  const stored = localStorage.getItem(THEME_KEY)
+  return stored === 'dark'
+}
+
+export function applyTheme(darkMode) {
+  if (typeof window === 'undefined') return
+  const theme = darkMode ? 'dark' : 'light'
+  document.documentElement.setAttribute('data-theme', theme)
+  document.documentElement.style.colorScheme = theme
+  localStorage.setItem(THEME_KEY, theme)
 }
 
 export function toggleTheme(darkMode) {
   const next = !darkMode
-  document.documentElement.setAttribute('data-theme', next ? '' : 'light')
-  localStorage.setItem('theme', next ? 'dark' : 'light')
+  applyTheme(next)
   return next
 }

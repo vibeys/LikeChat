@@ -8,7 +8,7 @@ import { loadBlockedProfiles, unblockUser, fetchAccountStats } from '../../servi
 import { getInitials, getAvatarColor, formatDate } from '../../lib/utils'
 import {
   Camera, PencilSimple, User, At, FileText, EnvelopeSimple, ShieldCheck,
-  X, Check, GearSix, CaretRight, CalendarBlank, Prohibit,
+  X, Check, GearSix, CaretRight, CalendarBlank, Prohibit, ChatCircleDots, Users,
 } from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
@@ -24,9 +24,11 @@ export default function ProfilePage() {
   const [photoLoading, setPhotoLoading] = useState(false)
   const [blockedProfiles, setBlockedProfiles] = useState([])
   const [blockedLoading, setBlockedLoading] = useState(false)
+  const [blockedOpen, setBlockedOpen] = useState(false)
   const [unblocking, setUnblocking] = useState(null)
   const [stats, setStats] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
 
   const fileRef = useRef(null)
   const ac = getAvatarColor(user?.displayName || '')
@@ -74,11 +76,21 @@ export default function ProfilePage() {
 
   function closeModal() {
     setOpenModal(null)
+    setBlockedOpen(false)
+    setStatsOpen(false)
   }
 
   async function openBlocked() {
-    if (blockedProfiles.length || !(user?.blockedUsers?.length)) return
+    if (!(user?.blockedUsers?.length)) {
+      setBlockedProfiles([])
+      setBlockedOpen(true)
+      return
+    }
+
+    setBlockedOpen(true)
     setBlockedLoading(true)
+    setBlockedProfiles([])
+
     try {
       const profiles = await loadBlockedProfiles(user.uid)
       setBlockedProfiles(profiles)
@@ -104,8 +116,9 @@ export default function ProfilePage() {
   }
 
   async function openStats() {
-    if (stats) return
+    setStatsOpen(true)
     setStatsLoading(true)
+    setStats(null)
     try {
       const data = await fetchAccountStats(user.uid)
       setStats({
@@ -294,9 +307,9 @@ export default function ProfilePage() {
           </Sheet>
         )}
 
-        {blockedProfiles.length > 0 && (
-          <Sheet title="Blocked Users" onClose={() => setBlockedProfiles([])} scroll>
-            {blockedLoading ? (
+        {blockedOpen && (
+          <Sheet title="Blocked Users" onClose={() => setBlockedOpen(false)} scroll>
+            {blockedLoading && blockedProfiles.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '32px 0' }}>
                 <Spinner size={22} />
                 <p style={{ marginTop: 10, fontSize: 13, color: 'var(--text-tertiary)' }}>Loading...</p>
@@ -334,19 +347,26 @@ export default function ProfilePage() {
           </Sheet>
         )}
 
-        {stats && (
-          <Sheet title="Account Stats" onClose={() => setStats(null)} scroll>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <StatCard emoji="💬" label="Messages Sent" value={stats.messagesSent?.toLocaleString() ?? '0'} />
-                <StatCard emoji="👥" label="Friends" value={stats.friendsCount?.toLocaleString() ?? '0'} />
-                <StatCard emoji="🚫" label="Blocked" value={stats.blockedCount?.toString() ?? '0'} />
-                {stats.joinedAt && (
-                  <StatCard emoji="📅" label="Member Since"
-                    value={new Date(stats.joinedAt?.toDate?.() ?? stats.joinedAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })} />
-                )}
+        {statsOpen && (
+          <Sheet title="Account Stats" onClose={() => setStatsOpen(false)} scroll>
+            {statsLoading && !stats ? (
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <Spinner size={22} />
+                <p style={{ marginTop: 10, fontSize: 13, color: 'var(--text-tertiary)' }}>Loading...</p>
               </div>
-            </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <StatCard Icon={ChatCircleDots} label="Messages Sent" value={stats?.messagesSent?.toLocaleString() ?? '0'} />
+                  <StatCard Icon={Users} label="Friends" value={stats?.friendsCount?.toLocaleString() ?? '0'} />
+                  <StatCard Icon={Prohibit} label="Blocked" value={stats?.blockedCount?.toString() ?? '0'} />
+                  {stats?.joinedAt && (
+                    <StatCard Icon={CalendarBlank} label="Member Since"
+                      value={new Date(stats.joinedAt?.toDate?.() ?? stats.joinedAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })} />
+                  )}
+                </div>
+              </div>
+            )}
           </Sheet>
         )}
       </AnimatePresence>
@@ -470,13 +490,30 @@ function SectionLabel({ label }) {
   )
 }
 
-function StatCard({ emoji, label, value }) {
+function StatCard({ Icon, label, value }) {
   return (
     <div style={{
-      background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 12,
-      padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 10,
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: '14px 16px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
     }}>
-      <span style={{ fontSize: 22 }}>{emoji}</span>
+      <div style={{
+        width: 34,
+        height: 34,
+        borderRadius: 10,
+        background: 'var(--primary-light)',
+        color: 'var(--primary)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}>
+        <Icon size={18} weight="bold" />
+      </div>
       <div>
         <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>{value}</p>
         <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500 }}>{label}</p>
