@@ -1,4 +1,7 @@
-import { getToken, onMessage } from 'firebase/messaging'
+import {
+  getToken,
+  onMessage,
+} from 'firebase/messaging'
 import {
   doc,
   setDoc,
@@ -10,7 +13,8 @@ import {
   writeBatch,
 } from 'firebase/firestore'
 import { messaging, db } from '../lib/firebase'
-import toast from 'react-hot-toast'
+import { getUser } from './userService'
+import { shouldDeliverNotification } from './settingsService'
 
 function ensureWindowTimers() {
   if (typeof window === 'undefined') return null
@@ -26,12 +30,15 @@ function nowMs() {
   return Date.now()
 }
 
-// ── Request FCM permission + save token ───────────────────
+async function canStoreNotification(toUid, type) {
+  const user = await getUser(toUid).catch(() => null)
+  if (!user) return true
+  return shouldDeliverNotification(user.notifications, type)
+}
+
 export async function requestNotificationPermission(uid) {
   try {
     if (typeof window === 'undefined' || !('Notification' in window)) return null
-
-    // messaging can be null on unsupported browsers (see firebase.js)
     if (!messaging) return null
 
     const permission = await Notification.requestPermission()
@@ -52,31 +59,19 @@ export async function requestNotificationPermission(uid) {
   }
 }
 
-// ── Foreground message listener ───────────────────────────
-// Returns an unsubscribe function, or a no-op if messaging isn't supported.
 export function onForegroundMessage(callback) {
   if (!messaging) return () => {}
   return onMessage(messaging, callback)
 }
 
-// ── Initialize notifications for a logged-in user ─────────
-// Call this once after login (in AuthContext).
-// Requests FCM permission + saves token. Does NOT set up a foreground
-// toast listener here — that lives in App.jsx so the styled toast is used.
 export function initNotifications(uid) {
   if (!uid) return () => {}
-
-  // Request permission + register token (non-blocking)
   requestNotificationPermission(uid).catch(err =>
     console.warn('initNotifications: permission failed', err)
   )
-
-  // No foreground listener here — App.jsx handles it with the styled toast.
-  // Returning a no-op so AuthContext can still call the returned unsub safely.
   return () => {}
 }
 
-// ── Write a notification to Firestore ─────────────────────
 export async function sendNotification(toUid, {
   type = 'message',
   title = 'Notification',
@@ -91,36 +86,44 @@ export async function sendNotification(toUid, {
 }) {
   if (!toUid) return null
 
-  // Validate notification type — includes all supported event kinds
   const validTypes = [
-    'message', 'media', 'reaction', 'friend_request', 'friend_accepted',
-    'group_invite', 'announce', 'mention', 'call', 'missed_call',
+    'message',
+    'media',
+    'reaction',
+    'friend_request',
+    'friend_accepted',
+    'group_invite',
+    'announce',
+    'mention',
+    'call',
+    'missed_call',
   ]
   const safeType = validTypes.includes(type) ? type : 'message'
 
   try {
+    const allowed = await canStoreNotification(toUid, safeType)
+    if (!allowed) return null
+
     const notifRef = doc(collection(db, 'notifications', toUid, 'items'))
 
     await setDoc(notifRef, {
-      type:      safeType,
-      title:     safeText(title, 'Notification'),
-      text:      safeText(body, ''),
-      fromUid:   safeText(fromUid, ''),
-      fromName:  safeText(fromName, 'Someone'),
+      type: safeType,
+      title: safeText(title, 'Notification'),
+      text: safeText(body, ''),
+      fromUid: safeText(fromUid, ''),
+      fromName: safeText(fromName, 'Someone'),
       fromPhoto: safeText(fromPhoto, ''),
-      convId:    convId    || null,
+      convId: convId || null,
       groupName: groupName || null,
-      emoji:     emoji     || null,
-      read:      false,
-      createdAt:   serverTimestamp(),
+      emoji: emoji || null,
+      read: false,
+      createdAt: serverTimestamp(),
       createdAtMs: nowMs(),
       ...data,
     })
 
     return notifRef.id
   } catch (err) {
-    // Silently swallow permission errors so they never block the UI.
-    // The notification is best-effort — the app should work fine without it.
     if (err?.code === 'permission-denied') {
       console.warn('sendNotification: permission denied for uid', toUid)
     } else {
@@ -130,7 +133,6 @@ export async function sendNotification(toUid, {
   }
 }
 
-// ── Mark a notification as read ───────────────────────────
 export async function markNotificationRead(toUid, notifId) {
   if (!toUid || !notifId) return
   try {
@@ -142,7 +144,6 @@ export async function markNotificationRead(toUid, notifId) {
   }
 }
 
-// ── Delete a notification ─────────────────────────────────
 export async function deleteNotification(toUid, notifId) {
   if (!toUid || !notifId) return
   try {
@@ -154,23 +155,21 @@ export async function deleteNotification(toUid, notifId) {
   }
 }
 
-// ── Delete all notifications for a user ──────────────────
 export async function deleteAllNotifications(uid) {
   if (!uid) return
   try {
-    const itemsSnap = await collection(db, 'notifications', uid, 'items')
-    const docs = await getDocs(itemsSnap)
+    const itemsRef = collection(db, 'notifications', uid, 'items')
+    const docsSnap = await getDocs(itemsRef)
+    if (docsSnap.empty) return
+
     const batch = writeBatch(db)
-    docs.docs.forEach(d => batch.delete(d.ref))
-    if (docs.docs.length > 0) await batch.commit()
+    docsSnap.docs.forEach(d => batch.delete(d.ref))
+    await batch.commit()
   } catch (err) {
     console.warn('Failed to delete all notifications:', err?.message || err)
   }
 }
 
-// ── Schedule a delayed message notification ───────────────
-// Waits 10 seconds before writing — if the recipient reads the message
-// in that window the notification is cancelled and never written.
 export function scheduleMessageNotif(toUid, {
   fromUid,
   fromName,
@@ -188,27 +187,21 @@ export function scheduleMessageNotif(toUid, {
   const timers = ensureWindowTimers()
   if (!timers) return
 
-  // Clear any existing timer for this message
   if (timers[key]) clearTimeout(timers[key])
 
   timers[key] = setTimeout(async () => {
     try {
       const { getDoc, doc: firestoreDoc } = await import('firebase/firestore')
-      const { db: firestoreDb }           = await import('../lib/firebase')
+      const { db: firestoreDb } = await import('../lib/firebase')
 
       const msgSnap = await getDoc(
         firestoreDoc(firestoreDb, 'conversations', convId, 'messages', messageId)
       )
       const msgData = msgSnap.data()
 
-      // Only notify if the recipient hasn't read the message yet
       if (!msgData?.readBy?.includes(toUid)) {
-        // For groups: title is "GroupName" so receiver knows which group
-        // For DMs: title is the sender's name
-        const title    = isGroup ? (groupName || 'Group') : fromName
-        const notifType = ['image', 'video', 'file'].includes(messageType)
-          ? 'media'
-          : 'message'
+        const title = isGroup ? (groupName || 'Group') : fromName
+        const notifType = ['image', 'video', 'file'].includes(messageType) ? 'media' : 'message'
 
         await sendNotification(toUid, {
           type: notifType,
@@ -227,10 +220,9 @@ export function scheduleMessageNotif(toUid, {
     }
 
     delete timers[key]
-  }, 10_000) // 10 seconds — enough time to cancel if message is read
+  }, 10_000)
 }
 
-// ── Cancel a scheduled message notification ───────────────
 export function cancelMessageNotif(convId, messageId) {
   if (typeof window === 'undefined') return
 
@@ -242,7 +234,6 @@ export function cancelMessageNotif(convId, messageId) {
   }
 }
 
-// ── Cancel ALL scheduled notifs for a conversation ────────
 export function cancelAllConvNotifs(convId) {
   if (typeof window === 'undefined' || !window._notifTimers) return
 
@@ -254,11 +245,6 @@ export function cancelAllConvNotifs(convId) {
   })
 }
 
-// ── Send a call notification ──────────────────────────────
-// Writes an immediate Firestore notification for an incoming call.
-// This shows up in the notification list AND triggers any push
-// (via Cloud Functions / FCM) so the callee is alerted even if
-// the app is backgrounded.
 export async function sendCallNotification(calleeUid, {
   callerUid,
   callerName,
@@ -268,18 +254,17 @@ export async function sendCallNotification(calleeUid, {
   callType = 'audio',
 }) {
   return sendNotification(calleeUid, {
-    type:      'call',
-    title:     callerName || 'Incoming call',
-    body:      callType === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call',
-    fromUid:   callerUid,
-    fromName:  callerName,
+    type: 'call',
+    title: callerName || 'Incoming call',
+    body: callType === 'video' ? 'Incoming video call' : 'Incoming audio call',
+    fromUid: callerUid,
+    fromName: callerName,
     fromPhoto: callerPhoto,
     convId,
-    data:      { callId, callType },
+    data: { callId, callType },
   })
 }
 
-// ── Send a missed-call notification ──────────────────────
 export async function sendMissedCallNotification(calleeUid, {
   callerUid,
   callerName,
@@ -289,27 +274,26 @@ export async function sendMissedCallNotification(calleeUid, {
   callType = 'audio',
 }) {
   return sendNotification(calleeUid, {
-    type:      'missed_call',
-    title:     callerName || 'Missed call',
-    body:      callType === 'video' ? '📹 Missed video call' : '📞 Missed audio call',
-    fromUid:   callerUid,
-    fromName:  callerName,
+    type: 'missed_call',
+    title: callerName || 'Missed call',
+    body: callType === 'video' ? 'Missed video call' : 'Missed audio call',
+    fromUid: callerUid,
+    fromName: callerName,
     fromPhoto: callerPhoto,
     convId,
-    data:      { callId, callType },
+    data: { callId, callType },
   })
 }
 
-// ── Send a friend-accepted notification ──────────────────
 export async function sendFriendAcceptedNotification(toUid, {
   fromUid,
   fromName,
   fromPhoto,
 }) {
   return sendNotification(toUid, {
-    type:      'friend_accepted',
-    title:     `${fromName || 'Someone'} accepted your friend request`,
-    body:      'You are now friends!',
+    type: 'friend_accepted',
+    title: `${fromName || 'Someone'} accepted your friend request`,
+    body: 'You are now friends!',
     fromUid,
     fromName,
     fromPhoto,

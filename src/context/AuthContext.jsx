@@ -1,59 +1,97 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { onAuthStateChanged, reload } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 import { goOnline } from '../lib/presence'
 import { initNotifications } from '../services/notificationService'
+import {
+  DEFAULT_NOTIFICATIONS,
+  DEFAULT_PRIVACY,
+  sanitizeNotifications,
+  sanitizePrivacy,
+} from '../services/settingsService'
 
 const AuthContext = createContext(null)
-export function useAuth() { return useContext(AuthContext) }
+
+export function useAuth() {
+  return useContext(AuthContext)
+}
+
+function withDefaults(firebaseUser, firestoreData = {}) {
+  return {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: firebaseUser.displayName,
+    ...firestoreData,
+    privacy: sanitizePrivacy({ ...DEFAULT_PRIVACY, ...(firestoreData.privacy || {}) }),
+    notifications: sanitizeNotifications({
+      ...DEFAULT_NOTIFICATIONS,
+      ...(firestoreData.notifications || {}),
+    }),
+    emailVerified: firebaseUser.emailVerified,
+  }
+}
 
 export function AuthProvider({ children }) {
-  const [user,    setUser]    = useState(null)
+  const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState(null)
+  const [error, setError] = useState(null)
+
+  const stopPresenceRef = useRef(() => {})
+  const stopNotifRef = useRef(() => {})
 
   async function buildUser(firebaseUser) {
     try {
-      try { await reload(firebaseUser) } catch (_) {}
-      const snap          = await getDoc(doc(db, 'users', firebaseUser.uid))
+      try {
+        await reload(firebaseUser)
+      } catch (_) {}
+
+      const snap = await getDoc(doc(db, 'users', firebaseUser.uid))
       const firestoreData = snap.exists() ? snap.data() : {}
-      return {
-        uid:          firebaseUser.uid,
-        email:        firebaseUser.email,
-        displayName:  firebaseUser.displayName,
-        ...firestoreData,
-        // always override with live value from Firebase Auth
-        emailVerified: firebaseUser.emailVerified,
-      }
+      return withDefaults(firebaseUser, firestoreData)
     } catch (err) {
       console.warn('AuthContext buildUser error:', err)
-      return {
-        uid:           firebaseUser.uid,
-        email:         firebaseUser.email,
-        emailVerified: firebaseUser.emailVerified,
-        displayName:   firebaseUser.displayName,
-      }
+      return withDefaults(firebaseUser, {})
     }
   }
 
   useEffect(() => {
-    let unsubNotif = () => {}
     const unsubAuth = onAuthStateChanged(
       auth,
       async (firebaseUser) => {
         try {
-          unsubNotif()
+          stopPresenceRef.current?.()
+          stopPresenceRef.current = () => {}
+          stopNotifRef.current?.()
+          stopNotifRef.current = () => {}
+
           if (firebaseUser) {
             const userData = await buildUser(firebaseUser)
             setUser(userData)
             setError(null)
-            goOnline(firebaseUser.uid)
-            unsubNotif = initNotifications(firebaseUser.uid) ?? (() => {})
+
+            const stopPresence = goOnline(firebaseUser.uid)
+            if (typeof stopPresence === 'function') {
+              stopPresenceRef.current = stopPresence
+            }
+
+            const wantsNotifications =
+              userData?.notifications?.messages ||
+              userData?.notifications?.mentions ||
+              userData?.notifications?.friendReqs ||
+              userData?.notifications?.appUpdates
+
+            if (wantsNotifications) {
+              const stopNotif = initNotifications(firebaseUser.uid)
+              if (typeof stopNotif === 'function') {
+                stopNotifRef.current = stopNotif
+              }
+            }
           } else {
             setUser(null)
             setError(null)
           }
+
           setLoading(false)
         } catch (err) {
           console.error('AuthContext onAuthStateChanged error:', err)
@@ -67,7 +105,12 @@ export function AuthProvider({ children }) {
         setLoading(false)
       }
     )
-    return () => { unsubAuth(); unsubNotif() }
+
+    return () => {
+      unsubAuth()
+      stopPresenceRef.current?.()
+      stopNotifRef.current?.()
+    }
   }, [])
 
   async function refreshUser() {

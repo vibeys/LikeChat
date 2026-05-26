@@ -1,6 +1,3 @@
-// src/services/settingsService.js
-// Dedicated settings service for user preferences and account settings.
-
 import {
   doc,
   setDoc,
@@ -37,9 +34,14 @@ export const DEFAULT_NOTIFICATIONS = {
 }
 
 const THEME_KEY = 'lc_theme'
+const THEME_EVENT = 'lc-theme-change'
 
 function asBoolean(value, fallback) {
   return typeof value === 'boolean' ? value : fallback
+}
+
+function normalizeTheme(value) {
+  return value === 'dark' ? 'dark' : 'light'
 }
 
 export function sanitizePrivacy(privacy = {}) {
@@ -98,34 +100,40 @@ export function canShowProfilePhoto(userData) {
   return sanitizePrivacy(userData?.privacy).profileVisible !== 'nobody'
 }
 
-// PASSWORD
 export async function changePassword(currentPassword, newPassword) {
   const auth = getAuth()
   const firebaseUser = auth.currentUser
   if (!firebaseUser) throw new Error('No authenticated user')
+  if (!firebaseUser.email) throw new Error('This account does not use email/password.')
 
   const credential = EmailAuthProvider.credential(firebaseUser.email, currentPassword)
   await reauthenticateWithCredential(firebaseUser, credential)
   await updatePassword(firebaseUser, newPassword)
 }
 
-// PRIVACY
 export async function savePrivacySettings(uid, privacy) {
   if (!uid) throw new Error('Missing user id')
-  await setDoc(doc(db, 'users', uid), { privacy: sanitizePrivacy(privacy) }, { merge: true })
+  await setDoc(
+    doc(db, 'users', uid),
+    { privacy: sanitizePrivacy(privacy) },
+    { merge: true }
+  )
 }
 
-// NOTIFICATIONS
 export async function saveNotificationPrefs(uid, notifications) {
   if (!uid) throw new Error('Missing user id')
-  await setDoc(doc(db, 'users', uid), { notifications: sanitizeNotifications(notifications) }, { merge: true })
+  await setDoc(
+    doc(db, 'users', uid),
+    { notifications: sanitizeNotifications(notifications) },
+    { merge: true }
+  )
 }
 
-// BLOCKED USERS
 export async function loadBlockedProfiles(uid) {
   const userSnap = await getUser(uid)
   const blockedUids = userSnap?.blockedUsers || []
   if (!blockedUids.length) return []
+
   const profiles = await Promise.all(blockedUids.map(buid => getUser(buid)))
   return profiles.filter(Boolean)
 }
@@ -136,7 +144,6 @@ export async function unblockUser(uid, theirUid) {
   })
 }
 
-// ACCOUNT STATS
 export async function fetchAccountStats(uid) {
   let messagesSent = 0
   let friendsCount = 0
@@ -175,7 +182,6 @@ export async function fetchAccountStats(uid) {
   return { messagesSent, friendsCount }
 }
 
-// THEME
 export function getInitialTheme() {
   if (typeof window === 'undefined') return false
   const stored = localStorage.getItem(THEME_KEY)
@@ -185,13 +191,18 @@ export function getInitialTheme() {
 export function applyTheme(darkMode) {
   if (typeof window === 'undefined') return
   const theme = darkMode ? 'dark' : 'light'
+  localStorage.setItem(THEME_KEY, theme)
+  window.dispatchEvent(new Event(THEME_EVENT))
   document.documentElement.setAttribute('data-theme', theme)
   document.documentElement.style.colorScheme = theme
-  localStorage.setItem(THEME_KEY, theme)
 }
 
 export function toggleTheme(darkMode) {
   const next = !darkMode
   applyTheme(next)
   return next
+}
+
+export function getThemeEventName() {
+  return THEME_EVENT
 }

@@ -11,50 +11,13 @@ import {
 import { updateProfile as firebaseUpdateProfile } from 'firebase/auth'
 import { auth, db } from '../lib/firebase'
 import { uploadToCloudinary } from '../lib/cloudinary'
-
-const DEFAULT_PRIVACY = {
-  profileVisible: 'everyone',
-  showLastSeen: true,
-  showOnlineStatus: true,
-  allowFriendReqs: true,
-  readReceipts: true,
-}
-
-const DEFAULT_NOTIFICATIONS = {
-  messages: true,
-  mentions: true,
-  friendReqs: true,
-  appUpdates: false,
-  sound: true,
-}
-
-function sanitizePrivacy(privacy = {}) {
-  return {
-    profileVisible: ['everyone', 'friends', 'nobody'].includes(privacy.profileVisible)
-      ? privacy.profileVisible
-      : DEFAULT_PRIVACY.profileVisible,
-    showLastSeen: typeof privacy.showLastSeen === 'boolean' ? privacy.showLastSeen : DEFAULT_PRIVACY.showLastSeen,
-    showOnlineStatus: typeof privacy.showOnlineStatus === 'boolean' ? privacy.showOnlineStatus : DEFAULT_PRIVACY.showOnlineStatus,
-    allowFriendReqs: typeof privacy.allowFriendReqs === 'boolean' ? privacy.allowFriendReqs : DEFAULT_PRIVACY.allowFriendReqs,
-    readReceipts: typeof privacy.readReceipts === 'boolean' ? privacy.readReceipts : DEFAULT_PRIVACY.readReceipts,
-  }
-}
-
-function sanitizeNotifications(notifications = {}) {
-  return {
-    messages: typeof notifications.messages === 'boolean' ? notifications.messages : DEFAULT_NOTIFICATIONS.messages,
-    mentions: typeof notifications.mentions === 'boolean' ? notifications.mentions : DEFAULT_NOTIFICATIONS.mentions,
-    friendReqs: typeof notifications.friendReqs === 'boolean' ? notifications.friendReqs : DEFAULT_NOTIFICATIONS.friendReqs,
-    appUpdates: typeof notifications.appUpdates === 'boolean' ? notifications.appUpdates : DEFAULT_NOTIFICATIONS.appUpdates,
-    sound: typeof notifications.sound === 'boolean' ? notifications.sound : DEFAULT_NOTIFICATIONS.sound,
-  }
-}
+import { DEFAULT_NOTIFICATIONS, DEFAULT_PRIVACY, sanitizeNotifications, sanitizePrivacy } from './settingsService'
 
 function withDefaults(userData = {}) {
   return {
     ...userData,
-    privacy: sanitizePrivacy(userData.privacy || {}),
-    notifications: sanitizeNotifications(userData.notifications || {}),
+    privacy: sanitizePrivacy(userData.privacy || DEFAULT_PRIVACY),
+    notifications: sanitizeNotifications(userData.notifications || DEFAULT_NOTIFICATIONS),
   }
 }
 
@@ -67,13 +30,13 @@ export async function updateProfile(uid, data) {
   const { photoFile, privacy, notifications, ...rest } = data
   const authUser = auth.currentUser
 
-  if (photoFile) {
-    rest.photoURL = await uploadToCloudinary(photoFile, 'avatars')
-  }
-
   const patch = {
     ...rest,
     lastSeen: serverTimestamp(),
+  }
+
+  if (photoFile) {
+    patch.photoURL = await uploadToCloudinary(photoFile, 'avatars')
   }
 
   if (privacy) patch.privacy = sanitizePrivacy(privacy)
@@ -84,13 +47,13 @@ export async function updateProfile(uid, data) {
   if (authUser?.uid === uid) {
     const authPatch = {}
     if (typeof rest.displayName === 'string') authPatch.displayName = rest.displayName
-    if (typeof rest.photoURL === 'string') authPatch.photoURL = rest.photoURL || null
+    if (typeof patch.photoURL === 'string') authPatch.photoURL = patch.photoURL || null
 
     if (Object.keys(authPatch).length) {
       try {
         await firebaseUpdateProfile(authUser, authPatch)
       } catch (err) {
-        console.warn('Firebase auth profile update failed:', err?.message || err)
+        console.warn('Firebase Auth profile update failed:', err?.message || err)
       }
     }
   }
@@ -105,7 +68,7 @@ export async function uploadProfilePhoto(uid, file) {
     try {
       await firebaseUpdateProfile(authUser, { photoURL: url })
     } catch (err) {
-      console.warn('Firebase auth photo update failed:', err?.message || err)
+      console.warn('Firebase Auth photo update failed:', err?.message || err)
     }
   }
 
@@ -121,8 +84,6 @@ export async function searchByUsername(username) {
   return snap.docs.map(d => withDefaults({ uid: d.id, ...d.data() }))
 }
 
-// Creates or completes the user doc in one single write.
-// Called from SetupProfile — user is guaranteed authenticated here.
 export async function completeSetup(uid, { displayName, username, bio, photoFile }) {
   let photoURL = ''
   if (photoFile) {
@@ -161,7 +122,7 @@ export async function completeSetup(uid, { displayName, username, bio, photoFile
         photoURL: photoURL || null,
       })
     } catch (err) {
-      console.warn('Firebase auth setup profile update failed:', err?.message || err)
+      console.warn('Firebase Auth setup profile update failed:', err?.message || err)
     }
   }
 }
