@@ -1,4 +1,3 @@
-// src/services/friendService.js
 import {
   doc, setDoc, updateDoc, deleteDoc,
   collection, query, where, onSnapshot,
@@ -6,27 +5,35 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { sendNotification } from './notificationService'
+import { canReceiveFriendRequests } from './settingsService'
 
 // ── SEND FRIEND REQUEST ───────────────────────────────────
 export async function sendFriendRequest(myUid, theirUid) {
+  // Check if the recipient allows friend requests
+  const theirSnap = await getDoc(doc(db, 'users', theirUid))
+  const theirData = theirSnap.data() || {}
+  if (!canReceiveFriendRequests(theirData)) {
+    throw new Error('This user is not accepting friend requests.')
+  }
+
   const existingSnap = await getDoc(doc(db, 'friends', myUid, 'list', theirUid))
   if (existingSnap.exists()) {
     const data = existingSnap.data()
     if (data.status === 'accepted') throw new Error('Already friends!')
     if (data.status === 'pending')  throw new Error('Request already sent!')
   }
-  
+
   // Get sender's profile
   const myProfile = await getDoc(doc(db, 'users', myUid))
   const myData = myProfile.data() || {}
-  
+
   await setDoc(doc(db, 'friends', myUid, 'list', theirUid), {
     uid: theirUid, status: 'pending', direction: 'sent', addedAt: serverTimestamp(),
   })
   await setDoc(doc(db, 'friends', theirUid, 'list', myUid), {
     uid: myUid, status: 'pending', direction: 'received', addedAt: serverTimestamp(),
   })
-  
+
   // Send notification to recipient
   await sendNotification(theirUid, {
     type: 'friend_request',

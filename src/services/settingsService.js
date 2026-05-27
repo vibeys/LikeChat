@@ -40,10 +40,6 @@ function asBoolean(value, fallback) {
   return typeof value === 'boolean' ? value : fallback
 }
 
-function normalizeTheme(value) {
-  return value === 'dark' ? 'dark' : 'light'
-}
-
 export function sanitizePrivacy(privacy = {}) {
   const profileVisible = ['everyone', 'friends', 'nobody'].includes(privacy.profileVisible)
     ? privacy.profileVisible
@@ -92,13 +88,43 @@ export function shouldDeliverNotification(notificationPrefs = {}, type = 'messag
   }
 }
 
+// ── Privacy enforcement helpers ───────────────────────────────────────────────
+
+/** Should we show this user's online status to others? */
 export function canShowOnlineStatus(userData) {
   return sanitizePrivacy(userData?.privacy).showOnlineStatus
 }
 
+/** Should we show this user's last seen timestamp to others? */
+export function canShowLastSeen(userData) {
+  return sanitizePrivacy(userData?.privacy).showLastSeen
+}
+
+/** Can others view this user's profile? Pass viewer's friendship status: 'friend' | 'stranger' */
+export function canViewProfile(userData, viewerRelation = 'stranger') {
+  const visibility = sanitizePrivacy(userData?.privacy).profileVisible
+  if (visibility === 'everyone') return true
+  if (visibility === 'friends') return viewerRelation === 'friend'
+  if (visibility === 'nobody') return false
+  return true
+}
+
+/** Can others send this user friend requests? */
+export function canReceiveFriendRequests(userData) {
+  return sanitizePrivacy(userData?.privacy).allowFriendReqs
+}
+
+/** Should notification sounds play for this user? */
+export function shouldPlaySound(notificationPrefs = {}) {
+  return sanitizeNotifications(notificationPrefs).sound
+}
+
+/** @deprecated use canShowOnlineStatus */
 export function canShowProfilePhoto(userData) {
   return sanitizePrivacy(userData?.privacy).profileVisible !== 'nobody'
 }
+
+// ── Password ──────────────────────────────────────────────────────────────────
 
 export async function changePassword(currentPassword, newPassword) {
   const auth = getAuth()
@@ -110,6 +136,8 @@ export async function changePassword(currentPassword, newPassword) {
   await reauthenticateWithCredential(firebaseUser, credential)
   await updatePassword(firebaseUser, newPassword)
 }
+
+// ── Save settings ─────────────────────────────────────────────────────────────
 
 export async function savePrivacySettings(uid, privacy) {
   if (!uid) throw new Error('Missing user id')
@@ -129,6 +157,8 @@ export async function saveNotificationPrefs(uid, notifications) {
   )
 }
 
+// ── Blocked users ─────────────────────────────────────────────────────────────
+
 export async function loadBlockedProfiles(uid) {
   const userSnap = await getUser(uid)
   const blockedUids = userSnap?.blockedUsers || []
@@ -143,6 +173,8 @@ export async function unblockUser(uid, theirUid) {
     blockedUsers: arrayRemove(theirUid),
   })
 }
+
+// ── Account stats ─────────────────────────────────────────────────────────────
 
 export async function fetchAccountStats(uid) {
   let messagesSent = 0
@@ -181,6 +213,8 @@ export async function fetchAccountStats(uid) {
 
   return { messagesSent, friendsCount }
 }
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
 
 export function getInitialTheme() {
   if (typeof window === 'undefined') return false

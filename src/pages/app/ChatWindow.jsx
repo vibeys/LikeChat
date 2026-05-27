@@ -21,6 +21,7 @@ import {
   markNotificationRead,
 } from '../../services/notificationService'
 import { watchUserPresence } from '../../lib/presence'
+import { canShowOnlineStatus, canShowLastSeen } from '../../services/settingsService'
 import { useTyping } from '../../lib/typing'
 import MessageBubble from '../../components/MessageBubble'
 import MessageInput from '../../components/MessageInput'
@@ -73,7 +74,7 @@ export default function ChatWindow() {
   const navigate = useNavigate()
 
   const [convo, setConvo] = useState(null)
-  const [messages, setMessages] = useState([]) 
+  const [messages, setMessages] = useState([])
   const [presence, setPresence] = useState(null)
   const [replyTo, setReplyTo] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -82,6 +83,7 @@ export default function ChatWindow() {
   const [searchQ, setSearchQ] = useState('')
   const [activeCall, setActiveCall] = useState(null)
   const [startingCall, setStartingCall] = useState(false)
+  const [otherUserData, setOtherUserData] = useState(null)
 
   const bottomRef = useRef(null)
   const searchRef = useRef(null)
@@ -122,6 +124,16 @@ export default function ChatWindow() {
     const otherUid = convo.members?.find(uid => uid !== user.uid)
     if (!otherUid) return
     return watchUserPresence(otherUid, setPresence)
+  }, [convo, user?.uid])
+
+  // Fetch other user's profile to enforce their privacy settings
+  useEffect(() => {
+    if (!convo || convo.type === 'group') return
+    const otherUid = convo.members?.find(uid => uid !== user.uid)
+    if (!otherUid) return
+    getDoc(doc(db, 'users', otherUid))
+      .then(snap => { if (snap.exists()) setOtherUserData(snap.data()) })
+      .catch(() => {})
   }, [convo, user?.uid])
 
   useEffect(() => {
@@ -232,11 +244,17 @@ export default function ChatWindow() {
   const isPinned = convo?.pinnedBy?.includes(user?.uid)
   const isAdmin = convo?.admins?.includes(user?.uid)
 
+  // Respect the other user's privacy settings for online status and last seen
+  const showOnline = !isGroup && canShowOnlineStatus(otherUserData)
+  const showLastSeen = !isGroup && canShowLastSeen(otherUserData)
+
   const statusText = isGroup
     ? `${convo?.members?.length || 0} members`
-    : isOnline ? 'Online'
-    : isAway ? 'Away'
-    : presence?.lastSeen ? `Last seen ${formatLastSeen(presence.lastSeen)}` : 'Offline'
+    : (isOnline || isAway) && showOnline
+      ? isOnline ? 'Online' : 'Away'
+      : showLastSeen && presence?.lastSeen
+        ? `Last seen ${formatLastSeen(presence.lastSeen)}`
+        : 'Offline'
 
   const whoTyping = Object.keys(typingUsers || {})
     .filter(uid => uid !== user.uid)
@@ -272,13 +290,13 @@ export default function ChatWindow() {
             : <div style={{ width: 40, height: 40, borderRadius: '50%', background: avatarColor.bg, color: avatarColor.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700 }}>{getInitials(chatName || '?')}</div>
           }
           {!isGroup && (
-            <span style={{ position: 'absolute', bottom: 0, right: 0, width: 11, height: 11, borderRadius: '50%', border: '2px solid var(--bg-primary)', background: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--offline)' }} />
+            <span style={{ position: 'absolute', bottom: 0, right: 0, width: 11, height: 11, borderRadius: '50%', border: '2px solid var(--bg-primary)', background: isOnline && showOnline ? 'var(--online)' : isAway && showOnline ? 'var(--away)' : 'var(--offline)' }} />
           )}
         </div>
 
         <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setShowInfo(v => !v)}>
           <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{chatName}</p>
-          <p style={{ fontSize: 12, margin: 0, color: isOnline ? 'var(--online)' : isAway ? 'var(--away)' : 'var(--text-tertiary)' }}>{statusText}</p>
+          <p style={{ fontSize: 12, margin: 0, color: (isOnline && showOnline) ? 'var(--online)' : (isAway && showOnline) ? 'var(--away)' : 'var(--text-tertiary)' }}>{statusText}</p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -805,33 +823,13 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button
                       onClick={() => setModal(null)}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--bg-secondary)',
-                        color: 'var(--text-primary)',
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleBlockToggle}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid #b91c1c',
-                        background: '#b91c1c',
-                        color: '#fff',
-                        fontSize: 13,
-                        fontWeight: 900,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}
                     >
                       {isBlocked ? 'Unblock' : 'Block'}
                     </button>
@@ -846,34 +844,14 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button
                       onClick={() => setModal(null)}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--bg-secondary)',
-                        color: 'var(--text-primary)',
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleDeleteConversation}
                       disabled={loading}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid #b91c1c',
-                        background: '#b91c1c',
-                        color: '#fff',
-                        fontSize: 13,
-                        fontWeight: 900,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}
                     >
                       {loading ? 'Deleting…' : 'Delete'}
                     </button>
@@ -888,34 +866,14 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button
                       onClick={() => setModal(null)}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--bg-secondary)',
-                        color: 'var(--text-primary)',
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleLeaveGroup}
                       disabled={loading}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid #b91c1c',
-                        background: '#b91c1c',
-                        color: '#fff',
-                        fontSize: 13,
-                        fontWeight: 900,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}
                     >
                       {loading ? 'Leaving…' : 'Leave Group'}
                     </button>
@@ -930,34 +888,14 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button
                       onClick={() => { setModal(null); setSelectedMember(null) }}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--bg-secondary)',
-                        color: 'var(--text-primary)',
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={() => handleRemoveMember(selectedMember)}
                       disabled={loading}
-                      style={{
-                        flex: 1,
-                        padding: '11px',
-                        borderRadius: 12,
-                        border: '1px solid #b91c1c',
-                        background: '#b91c1c',
-                        color: '#fff',
-                        fontSize: 13,
-                        fontWeight: 900,
-                        cursor: 'pointer',
-                      }}
+                      style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #b91c1c', background: '#b91c1c', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}
                     >
                       {loading ? 'Removing…' : 'Remove'}
                     </button>

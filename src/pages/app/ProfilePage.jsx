@@ -39,6 +39,7 @@ export default function ProfilePage() {
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [photoLoading, setPhotoLoading] = useState(false)
+  const [avatarHovered, setAvatarHovered] = useState(false)
 
   const [blockedOpen, setBlockedOpen] = useState(false)
   const [blockedLoading, setBlockedLoading] = useState(false)
@@ -73,9 +74,7 @@ export default function ProfilePage() {
       }
     })()
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [blockedOpen, user?.uid, user?.blockedUsers?.length, blockedProfiles.length])
 
   useEffect(() => {
@@ -108,9 +107,7 @@ export default function ProfilePage() {
       }
     })()
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [statsOpen, stats, user?.uid, user?.blockedUsers?.length, user?.createdAt])
 
   function openEdit(field) {
@@ -211,6 +208,8 @@ export default function ProfilePage() {
               whileTap={{ scale: 0.98 }}
               style={S.avatarButton}
               disabled={photoLoading}
+              onMouseEnter={() => setAvatarHovered(true)}
+              onMouseLeave={() => setAvatarHovered(false)}
             >
               {user.photoURL ? (
                 <img src={user.photoURL} alt={user.displayName || 'Profile'} style={S.avatar} />
@@ -226,7 +225,7 @@ export default function ProfilePage() {
                 </div>
               )}
 
-              <div style={S.avatarOverlay}>
+              <div style={{ ...S.avatarOverlay, opacity: avatarHovered || photoLoading ? 1 : 0 }}>
                 {photoLoading ? <Spinner size={18} /> : <Camera size={18} weight="fill" />}
               </div>
             </motion.button>
@@ -653,9 +652,8 @@ const S = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.35)',
+    background: 'rgba(0,0,0,0.45)',
     color: '#fff',
-    opacity: 0,
     transition: 'opacity 0.15s ease',
   },
   nameBlock: {
@@ -838,7 +836,6 @@ const S = {
     justifyContent: 'center',
     gap: 8,
     boxShadow: '0 4px 14px rgba(30,144,255,0.25)',
-    opacity: 1,
   },
   emptyState: {
     padding: '32px 0',
@@ -909,7 +906,6 @@ const S = {
     fontSize: 12,
     fontWeight: 700,
     cursor: 'pointer',
-    opacity: 1,
   },
   statsGrid: {
     display: 'grid',

@@ -504,19 +504,7 @@ function Sheet({ title, onClose, children, scroll = false }) {
   )
 }
 
-function Row({
-  Icon,
-  label,
-  value,
-  dim,
-  valueColor,
-  labelColor,
-  iconColor,
-  iconBg,
-  onClick,
-  action,
-  last,
-}) {
+function Row({ Icon, label, value, dim, valueColor, labelColor, iconColor, iconBg, onClick, action, last }) {
   const Comp = onClick ? motion.button : 'div'
 
   return (
@@ -574,8 +562,9 @@ function Toggle({ on }) {
         height: 22,
         borderRadius: 999,
         flexShrink: 0,
-        background: on ? 'var(--primary)' : '#2c2c2c',
+        background: on ? 'var(--primary)' : 'var(--bg-tertiary, #3a3a3a)',
         position: 'relative',
+        border: '1px solid var(--border)',
       }}
     >
       <motion.div
@@ -583,7 +572,7 @@ function Toggle({ on }) {
         transition={{ type: 'spring', stiffness: 500, damping: 28 }}
         style={{
           position: 'absolute',
-          top: 2,
+          top: 1,
           width: 18,
           height: 18,
           borderRadius: '50%',
@@ -619,11 +608,12 @@ function ToggleRow({ label, sub, value, onChange, last }) {
           width: 40,
           height: 22,
           borderRadius: 999,
-          border: 'none',
+          border: '1px solid var(--border)',
           cursor: 'pointer',
           flexShrink: 0,
-          background: value ? 'var(--primary)' : '#2c2c2c',
+          background: value ? 'var(--primary)' : 'var(--bg-tertiary, #3a3a3a)',
           position: 'relative',
+          padding: 0,
         }}
       >
         <motion.div
@@ -631,7 +621,7 @@ function ToggleRow({ label, sub, value, onChange, last }) {
           transition={{ type: 'spring', stiffness: 500, damping: 28 }}
           style={{
             position: 'absolute',
-            top: 2,
+            top: 1,
             width: 18,
             height: 18,
             borderRadius: '50%',
@@ -685,10 +675,7 @@ function PwField({ label, field, pw, setPw, pwVis, setPwVis, autoFocus }) {
           onChange={e => setPw(prev => ({ ...prev, [field]: e.target.value }))}
           placeholder="••••••••"
           autoFocus={autoFocus}
-          style={{
-            ...S.input,
-            paddingRight: 40,
-          }}
+          style={{ ...S.input, paddingRight: 40 }}
         />
         <button
           type="button"
@@ -855,6 +842,14 @@ const S = {
     padding: '20px 22px',
     boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
   },
+  // ✅ FIX: deleteSheet was missing — caused a crash on delete account
+  deleteSheet: {
+    width: 'min(380px, calc(100vw - 32px))',
+    background: 'var(--bg-primary)',
+    borderRadius: 18,
+    padding: '24px 22px 20px',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
+  },
   sheetHeader: {
     display: 'flex',
     alignItems: 'center',
@@ -925,113 +920,6 @@ const S = {
     justifyContent: 'center',
     gap: 8,
     boxShadow: '0 4px 14px rgba(30,144,255,0.25)',
-  },
-  emptyState: {
-    padding: '32px 0',
-    textAlign: 'center',
-    color: 'var(--text-tertiary)',
-  },
-  emptyTitle: {
-    margin: '10px 0 4px',
-    fontSize: 14,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-  },
-  emptyText: {
-    margin: 0,
-    fontSize: 12,
-    color: 'var(--text-tertiary)',
-  },
-  list: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  blockRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    padding: '10px 0',
-  },
-  blockAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    background: 'var(--bg-secondary)',
-    overflow: 'hidden',
-    flexShrink: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: 'var(--text-primary)',
-    fontSize: 13,
-    fontWeight: 800,
-  },
-  blockAvatarImg: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-  },
-  blockInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  blockName: {
-    margin: 0,
-    fontSize: 13,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-  },
-  blockUser: {
-    margin: '1px 0 0',
-    fontSize: 11,
-    color: 'var(--text-tertiary)',
-  },
-  unblockBtn: {
-    padding: '7px 13px',
-    borderRadius: 9,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-    color: 'var(--text-primary)',
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-  statsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: 10,
-  },
-  statCard: {
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 14,
-    padding: '14px 16px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  statIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'var(--primary-light)',
-    color: 'var(--primary)',
-    flexShrink: 0,
-  },
-  statValue: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 800,
-    color: 'var(--text-primary)',
-  },
-  statLabel: {
-    margin: '2px 0 0',
-    fontSize: 11,
-    color: 'var(--text-tertiary)',
-    fontWeight: 600,
   },
   stack: {
     display: 'flex',
