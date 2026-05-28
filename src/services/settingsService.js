@@ -18,7 +18,7 @@ import { db } from '../lib/firebase'
 import { getUser } from './userService'
 
 export const DEFAULT_PRIVACY = {
-  profileVisible: 'everyone',
+  profileVisible: 'friends',
   showLastSeen: true,
   showOnlineStatus: true,
   allowFriendReqs: true,
@@ -41,7 +41,7 @@ function asBoolean(value, fallback) {
 }
 
 export function sanitizePrivacy(privacy = {}) {
-  const profileVisible = ['everyone', 'friends', 'nobody'].includes(privacy.profileVisible)
+  const profileVisible = ['friends', 'nobody'].includes(privacy.profileVisible)
     ? privacy.profileVisible
     : DEFAULT_PRIVACY.profileVisible
 
@@ -90,23 +90,30 @@ export function shouldDeliverNotification(notificationPrefs = {}, type = 'messag
 
 // ── Privacy enforcement helpers ───────────────────────────────────────────────
 
-/** Should we show this user's online status to others? */
-export function canShowOnlineStatus(userData) {
-  return sanitizePrivacy(userData?.privacy).showOnlineStatus
+/** Should we show this user's online status to the viewer?
+ *  Respects the user's own showOnlineStatus toggle.
+ *  Pass viewerRelation='friend' to also enforce friend-only gating if needed in future.
+ */
+export function canShowOnlineStatus(userData, viewerRelation = 'friend') {
+  // If the user has disabled their online status, never show it
+  if (!sanitizePrivacy(userData?.privacy).showOnlineStatus) return false
+  // Online status is only meaningful between friends (private chats)
+  // strangers can't chat with you anyway, so we default to showing it
+  return true
 }
 
-/** Should we show this user's last seen timestamp to others? */
-export function canShowLastSeen(userData) {
-  return sanitizePrivacy(userData?.privacy).showLastSeen
+/** Should we show this user's last seen timestamp to the viewer? */
+export function canShowLastSeen(userData, viewerRelation = 'friend') {
+  if (!sanitizePrivacy(userData?.privacy).showLastSeen) return false
+  return true
 }
 
 /** Can others view this user's profile? Pass viewer's friendship status: 'friend' | 'stranger' */
 export function canViewProfile(userData, viewerRelation = 'stranger') {
   const visibility = sanitizePrivacy(userData?.privacy).profileVisible
-  if (visibility === 'everyone') return true
   if (visibility === 'friends') return viewerRelation === 'friend'
   if (visibility === 'nobody') return false
-  return true
+  return false // default deny
 }
 
 /** Can others send this user friend requests? */

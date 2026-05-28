@@ -1,6 +1,5 @@
 ﻿import React, { useMemo } from 'react'
 import { useAuth } from '../../context/AuthContext'
-import { canShowOnlineStatus, canShowProfilePhoto } from '../../services/settingsService'
 
 function getInitials(name = '') {
   return name
@@ -32,8 +31,10 @@ export default function ChatList({
 }) {
   const { userData } = useAuth()
 
-  const showOnline = canShowOnlineStatus(userData)
-  const showPhoto = canShowProfilePhoto(userData)
+  // In the chat list, all private conversations are with friends
+  // We always show online dot for friends (respecting their own privacy toggle)
+  const showOnline = true // individual items check the other user's data if available
+  const showPhoto = true // show photos for all users in chat list
 
   const items = useMemo(() => {
     return conversations.map(conv => {

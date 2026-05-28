@@ -11,12 +11,12 @@ import {
   getThemeEventName,
   toggleTheme as toggleThemeService,
 } from '../../services/settingsService'
+import { goOnline } from '../../lib/presence'
 import { Spinner } from '../../components/UI'
 import {
   Lock,
   Sun,
   Moon,
-  Globe,
   BellSimple,
   CaretRight,
   CaretLeft,
@@ -53,7 +53,7 @@ export default function SettingsPage() {
   const [pwVis, setPwVis] = useState({ current: false, next: false, confirm: false })
 
   const [privacy, setPrivacy] = useState({
-    profileVisible: 'everyone',
+    profileVisible: 'friends',
     showLastSeen: true,
     showOnlineStatus: true,
     allowFriendReqs: true,
@@ -92,7 +92,6 @@ export default function SettingsPage() {
 
   const privacyLabel = useMemo(
     () => ({
-      everyone: 'Everyone',
       friends: 'Friends only',
       nobody: 'Nobody',
     }),
@@ -138,6 +137,8 @@ export default function SettingsPage() {
     try {
       await savePrivacySettings(user.uid, privacy)
       await refreshUser()
+      // Immediately update RTDB presence so showOnlineStatus takes effect without re-login
+      goOnline(user.uid, privacy.showOnlineStatus)
       toast.success('Privacy settings saved!')
       setModal(null)
     } catch (err) {
@@ -224,9 +225,9 @@ export default function SettingsPage() {
             action={<CaretRight size={15} />}
           />
           <Row
-            Icon={Globe}
+            Icon={Users}
             label="Privacy"
-            value={`Profile: ${privacyLabel[privacy.profileVisible]}`}
+            value={`Profile: ${privacyLabel[privacy.profileVisible] ?? 'Friends only'}`}
             onClick={() => setModal(M.PRIVACY)}
             action={<CaretRight size={15} />}
             last
@@ -327,8 +328,7 @@ export default function SettingsPage() {
             <FieldLabel>Who can see your profile</FieldLabel>
             <div style={S.chips}>
               {[
-                { v: 'everyone', Icon: Globe, label: 'Everyone' },
-                { v: 'friends', Icon: Users, label: 'Friends' },
+                { v: 'friends', Icon: Users, label: 'Friends only' },
                 { v: 'nobody', Icon: UserCircle, label: 'Nobody' },
               ].map(({ v, Icon, label }) => (
                 <VisChip
@@ -345,25 +345,25 @@ export default function SettingsPage() {
             <div style={S.toggleList}>
               <ToggleRow
                 label="Last seen"
-                sub="Show when you were last active"
+                sub="Show friends when you were last active"
                 value={privacy.showLastSeen}
                 onChange={v => setPrivacy(prev => ({ ...prev, showLastSeen: v }))}
               />
               <ToggleRow
                 label="Online status"
-                sub="Show when you are currently active"
+                sub="Show friends when you're currently active"
                 value={privacy.showOnlineStatus}
                 onChange={v => setPrivacy(prev => ({ ...prev, showOnlineStatus: v }))}
               />
               <ToggleRow
                 label="Friend requests"
-                sub="Allow others to send you requests"
+                sub="Allow others to send you friend requests"
                 value={privacy.allowFriendReqs}
                 onChange={v => setPrivacy(prev => ({ ...prev, allowFriendReqs: v }))}
               />
               <ToggleRow
                 label="Read receipts"
-                sub="Let others see when you read messages"
+                sub="Let others see when you've read their messages"
                 value={privacy.readReceipts}
                 onChange={v => setPrivacy(prev => ({ ...prev, readReceipts: v }))}
                 last

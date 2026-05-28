@@ -70,7 +70,9 @@ export function AuthProvider({ children }) {
             setUser(userData)
             setError(null)
 
-            const stopPresence = goOnline(firebaseUser.uid)
+            // Only go online in RTDB if the user hasn't disabled their online status
+            const showOnlineStatus = userData?.privacy?.showOnlineStatus !== false
+            const stopPresence = goOnline(firebaseUser.uid, showOnlineStatus)
             if (typeof stopPresence === 'function') {
               stopPresenceRef.current = stopPresence
             }

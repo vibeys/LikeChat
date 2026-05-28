@@ -245,8 +245,9 @@ export default function ChatWindow() {
   const isAdmin = convo?.admins?.includes(user?.uid)
 
   // Respect the other user's privacy settings for online status and last seen
-  const showOnline = !isGroup && canShowOnlineStatus(otherUserData)
-  const showLastSeen = !isGroup && canShowLastSeen(otherUserData)
+  // In a private chat, both users are friends (they must have connected to chat)
+  const showOnline = !isGroup && canShowOnlineStatus(otherUserData, 'friend')
+  const showLastSeen = !isGroup && canShowLastSeen(otherUserData, 'friend')
 
   const statusText = isGroup
     ? `${convo?.members?.length || 0} members`

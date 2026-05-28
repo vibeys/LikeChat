@@ -1,9 +1,8 @@
 // src/components/MessageInput.jsx
 import { useState, useRef, useEffect } from 'react'
 import { PaperPlaneRight, Paperclip, Smiley, X, Image, Video, File, Megaphone, At } from '@phosphor-icons/react'
-import { setTyping } from '../lib/typing'
+import { debounceTyping, setTyping } from '../lib/typing'
 import { sendMessage, uploadFile, sendAnnouncement, sendMentionNotif } from '../services/chatService'
-import { debounce } from '../lib/utils'
 
 const EMOJI_ROWS = [
   ['😀','😂','🥹','😍','😎','🤔','😴','😭'],
@@ -30,10 +29,6 @@ export default function MessageInput({
   const imageRef    = useRef(null)
   const videoRef    = useRef(null)
   const fileRef     = useRef(null)
-
-  const stopTyping = useRef(
-    debounce((cid, uid) => setTyping(cid, uid, false), 1500)
-  ).current
 
   useEffect(() => {
     if (!showEmoji && !showAttach) return
@@ -75,8 +70,9 @@ export default function MessageInput({
     }
 
     if (currentUser?.uid) {
-      setTyping(convId, currentUser.uid, true)
-      stopTyping(convId, currentUser.uid)
+      // debounceTyping handles writing true on first keystroke and auto-stops after silence
+      // — one write per burst, not per keystroke, no console spam
+      debounceTyping(convId, currentUser.uid, true)
     }
   }
 

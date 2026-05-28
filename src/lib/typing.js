@@ -1,6 +1,7 @@
 // src/lib/typing.js
 import { useEffect, useRef, useState } from 'react'
 import { ref, set, remove, onValue, onDisconnect } from 'firebase/database'
+import { getAuth } from 'firebase/auth'
 import { rtdb } from './firebase'
 
 const STALE_MS = 5000
@@ -25,42 +26,43 @@ function isPermissionDenied(err) {
   )
 }
 
+/** Returns true only if Firebase Auth currently has a token — prevents pointless writes */
+function isAuthenticated() {
+  try {
+    return !!getAuth().currentUser
+  } catch {
+    return false
+  }
+}
+
 async function writeTypingState(convId, uid, isTyping) {
   const safeConvId = clean(convId)
   const safeUid = clean(uid)
 
   if (!safeConvId || !safeUid) return
 
+  // Skip the write entirely if not authenticated — avoids permission_denied noise
+  if (!isAuthenticated()) return
+
   const nodeRef = getTypingRef(safeConvId, safeUid)
 
   try {
     if (isTyping) {
-      await set(nodeRef, {
-        typing: true,
-        ts: Date.now(),
-      })
-
-      try {
-        await onDisconnect(nodeRef).remove()
-      } catch (_) {
-        // No-op. onDisconnect may fail in some environments, but typing still works without it.
-      }
+      await set(nodeRef, { typing: true, ts: Date.now() })
+      // Register cleanup on disconnect — ignore failures silently
+      onDisconnect(nodeRef).remove().catch(() => {})
     } else {
       await remove(nodeRef)
     }
   } catch (err) {
+    // Swallow permission errors silently — they happen during auth transitions
     if (!isPermissionDenied(err)) {
       console.warn('writeTypingState failed:', err?.message || err)
     }
   }
 }
 
-// Public API: immediate set/remove
-export function setTyping(convId, uid, isTyping) {
-  void writeTypingState(convId, uid, isTyping)
-}
-
-// Public API: debounced typing updates
+// Public API: debounced — use this in UI components (one write per burst, not per keystroke)
 export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
   const safeConvId = clean(convId)
   const safeUid = clean(uid)
@@ -80,8 +82,10 @@ export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
     return
   }
 
+  // Write "typing: true" immediately (first keystroke)
   void writeTypingState(safeConvId, safeUid, true)
 
+  // Auto-stop after silence
   const timer = setTimeout(() => {
     void writeTypingState(safeConvId, safeUid, false)
     typingTimers.delete(key)
@@ -90,7 +94,13 @@ export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
   typingTimers.set(key, timer)
 }
 
-// Public API: force stop typing
+// Public API: immediate set — used after send/clear
+export function setTyping(convId, uid, isTyping) {
+  if (!isAuthenticated()) return
+  void writeTypingState(convId, uid, isTyping)
+}
+
+// Public API: force stop typing (clears timer + writes false)
 export function stopTypingNow(convId, uid) {
   const safeConvId = clean(convId)
   const safeUid = clean(uid)
@@ -105,6 +115,7 @@ export function stopTypingNow(convId, uid) {
     typingTimers.delete(key)
   }
 
+  if (!isAuthenticated()) return
   void writeTypingState(safeConvId, safeUid, false)
 }
 
@@ -120,13 +131,9 @@ export function watchTyping(convId, callback) {
     snap => {
       const raw = snap.val() || {}
       const now = Date.now()
-
       const active = Object.fromEntries(
-        Object.entries(raw).filter(([, v]) => {
-          return v?.ts && now - v.ts < STALE_MS
-        })
+        Object.entries(raw).filter(([, v]) => v?.ts && now - v.ts < STALE_MS)
       )
-
       callback(active)
     },
     err => {
@@ -147,21 +154,15 @@ export function useTyping(convId, uid) {
 
   useEffect(() => {
     if (!convId) return
-
     const unsub = watchTyping(convId, activeMap => {
       setTypingUsers(activeMap)
     })
-
     return () => unsub()
   }, [convId])
 
   function sendTyping(isTyping) {
     const next = Boolean(isTyping)
-
-    if (prevTypingRef.current === next && next === false) {
-      return
-    }
-
+    if (prevTypingRef.current === next && next === false) return
     prevTypingRef.current = next
     debounceTyping(convId, uid, next)
   }
