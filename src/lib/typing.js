@@ -1,12 +1,10 @@
-// src/lib/typing.js
 import { useEffect, useRef, useState } from 'react'
 import { ref, set, remove, onValue, onDisconnect } from 'firebase/database'
 import { getAuth } from 'firebase/auth'
 import { rtdb } from './firebase'
 
-const STALE_MS = 5000
+const STALE_MS   = 5000
 const DEBOUNCE_MS = 1200
-
 const typingTimers = new Map()
 
 function clean(value) {
@@ -18,74 +16,62 @@ function getTypingRef(convId, uid) {
 }
 
 function isPermissionDenied(err) {
-  const code = err?.code || err?.message || ''
-  return (
-    code === 'PERMISSION_DENIED' ||
-    code === 'permission_denied' ||
-    String(code).toLowerCase().includes('permission_denied')
-  )
+  const msg = String(err?.code || err?.message || '').toLowerCase()
+  return msg.includes('permission_denied') || msg.includes('permission denied')
 }
 
-/** Returns true only if Firebase Auth currently has a token — prevents pointless writes */
-function isAuthenticated() {
-  try {
-    return !!getAuth().currentUser
-  } catch {
-    return false
-  }
+/**
+ * Returns the current Firebase Auth UID.
+ * We check UID equality (not just "is someone logged in") to prevent
+ * the SDK from even attempting a write for the wrong user — which is
+ * what caused the per-keystroke permission_denied console spam.
+ */
+function currentUid() {
+  try { return getAuth().currentUser?.uid ?? null } catch { return null }
 }
 
 async function writeTypingState(convId, uid, isTyping) {
   const safeConvId = clean(convId)
-  const safeUid = clean(uid)
-
+  const safeUid    = clean(uid)
   if (!safeConvId || !safeUid) return
 
-  // Skip the write entirely if not authenticated — avoids permission_denied noise
-  if (!isAuthenticated()) return
+  // Guard: only write if THIS uid is currently authenticated
+  // This prevents the Firebase SDK from logging permission_denied
+  // when the auth token is temporarily unavailable (navigation, reconnect)
+  if (currentUid() !== safeUid) return
 
   const nodeRef = getTypingRef(safeConvId, safeUid)
-
   try {
     if (isTyping) {
       await set(nodeRef, { typing: true, ts: Date.now() })
-      // Register cleanup on disconnect — ignore failures silently
       onDisconnect(nodeRef).remove().catch(() => {})
     } else {
       await remove(nodeRef)
     }
   } catch (err) {
-    // Swallow permission errors silently — they happen during auth transitions
     if (!isPermissionDenied(err)) {
-      console.warn('writeTypingState failed:', err?.message || err)
+      console.warn('[typing] write error:', err?.message || err)
     }
   }
 }
 
-// Public API: debounced — use this in UI components (one write per burst, not per keystroke)
+/** Call on every keystroke — one write per burst, not per keystroke */
 export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
   const safeConvId = clean(convId)
-  const safeUid = clean(uid)
-
+  const safeUid    = clean(uid)
   if (!safeConvId || !safeUid) return
 
-  const key = `${safeConvId}:${safeUid}`
+  const key      = `${safeConvId}:${safeUid}`
   const existing = typingTimers.get(key)
-
-  if (existing) {
-    clearTimeout(existing)
-    typingTimers.delete(key)
-  }
+  if (existing) { clearTimeout(existing); typingTimers.delete(key) }
 
   if (!isTyping) {
     void writeTypingState(safeConvId, safeUid, false)
     return
   }
 
-  // Write "typing: true" immediately (first keystroke)
   void writeTypingState(safeConvId, safeUid, true)
 
-  // Auto-stop after silence
   const timer = setTimeout(() => {
     void writeTypingState(safeConvId, safeUid, false)
     typingTimers.delete(key)
@@ -94,40 +80,31 @@ export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
   typingTimers.set(key, timer)
 }
 
-// Public API: immediate set — used after send/clear
+/** Immediate set — call after send to clear typing state */
 export function setTyping(convId, uid, isTyping) {
-  if (!isAuthenticated()) return
+  if (currentUid() !== clean(uid)) return
   void writeTypingState(convId, uid, isTyping)
 }
 
-// Public API: force stop typing (clears timer + writes false)
+/** Force stop — clears timer AND writes false */
 export function stopTypingNow(convId, uid) {
   const safeConvId = clean(convId)
-  const safeUid = clean(uid)
-
+  const safeUid    = clean(uid)
   if (!safeConvId || !safeUid) return
 
   const key = `${safeConvId}:${safeUid}`
-  const existing = typingTimers.get(key)
+  const t   = typingTimers.get(key)
+  if (t) { clearTimeout(t); typingTimers.delete(key) }
 
-  if (existing) {
-    clearTimeout(existing)
-    typingTimers.delete(key)
-  }
-
-  if (!isAuthenticated()) return
-  void writeTypingState(safeConvId, safeUid, false)
+  if (currentUid() === safeUid) void writeTypingState(safeConvId, safeUid, false)
 }
 
-// Watch typing state in a conversation
 export function watchTyping(convId, callback) {
   const safeConvId = clean(convId)
   if (!safeConvId) return () => {}
 
-  const typingRef = ref(rtdb, `typing/${safeConvId}`)
-
   const unsub = onValue(
-    typingRef,
+    ref(rtdb, `typing/${safeConvId}`),
     snap => {
       const raw = snap.val() || {}
       const now = Date.now()
@@ -137,41 +114,30 @@ export function watchTyping(convId, callback) {
       callback(active)
     },
     err => {
-      if (!isPermissionDenied(err)) {
-        console.warn('watchTyping failed:', err?.message || err)
-      }
+      if (!isPermissionDenied(err)) console.warn('[typing] watch error:', err?.message || err)
       callback({})
     }
   )
-
   return unsub
 }
 
-// Hook used by chat UI
 export function useTyping(convId, uid) {
   const [typingUsers, setTypingUsers] = useState({})
-  const prevTypingRef = useRef(false)
+  const prevRef = useRef(false)
 
   useEffect(() => {
     if (!convId) return
-    const unsub = watchTyping(convId, activeMap => {
-      setTypingUsers(activeMap)
-    })
-    return () => unsub()
+    return watchTyping(convId, setTypingUsers)
   }, [convId])
 
   function sendTyping(isTyping) {
     const next = Boolean(isTyping)
-    if (prevTypingRef.current === next && next === false) return
-    prevTypingRef.current = next
+    if (prevRef.current === next && !next) return
+    prevRef.current = next
     debounceTyping(convId, uid, next)
   }
 
-  useEffect(() => {
-    return () => {
-      stopTypingNow(convId, uid)
-    }
-  }, [convId, uid])
+  useEffect(() => () => stopTypingNow(convId, uid), [convId, uid])
 
   return { typingUsers, sendTyping }
 }
