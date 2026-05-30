@@ -1,46 +1,44 @@
+/**
+ * typing.js
+ *
+ * KEY FIX: replaced isAuthenticated() (checks "is ANYONE logged in?")
+ * with currentUid() === safeUid (checks "is THIS EXACT USER authenticated?").
+ *
+ * The old check allowed writes for the wrong user during auth transitions,
+ * causing Firebase to log permission_denied to the console SYNCHRONOUSLY
+ * before any .catch() could run — that's why catch() couldn't suppress it.
+ * By skipping the write entirely when the UID doesn't match, the error
+ * never happens at all.
+ */
+
 import { useEffect, useRef, useState } from 'react'
 import { ref, set, remove, onValue, onDisconnect } from 'firebase/database'
 import { getAuth } from 'firebase/auth'
 import { rtdb } from './firebase'
 
-const STALE_MS   = 5000
-const DEBOUNCE_MS = 1200
-const typingTimers = new Map()
+const STALE_MS    = 5_000
+const DEBOUNCE_MS = 1_200
+const timers      = new Map()
 
-function clean(value) {
-  return typeof value === 'string' ? value.trim() : ''
+function clean(v) { return typeof v === 'string' ? v.trim() : '' }
+
+function isPermDenied(err) {
+  return String(err?.code || err?.message || '').toLowerCase().includes('permission')
 }
 
-function getTypingRef(convId, uid) {
-  return ref(rtdb, `typing/${convId}/${uid}`)
-}
-
-function isPermissionDenied(err) {
-  const msg = String(err?.code || err?.message || '').toLowerCase()
-  return msg.includes('permission_denied') || msg.includes('permission denied')
-}
-
-/**
- * Returns the current Firebase Auth UID.
- * We check UID equality (not just "is someone logged in") to prevent
- * the SDK from even attempting a write for the wrong user — which is
- * what caused the per-keystroke permission_denied console spam.
- */
 function currentUid() {
   try { return getAuth().currentUser?.uid ?? null } catch { return null }
 }
 
-async function writeTypingState(convId, uid, isTyping) {
-  const safeConvId = clean(convId)
-  const safeUid    = clean(uid)
-  if (!safeConvId || !safeUid) return
+async function writeTyping(convId, uid, isTyping) {
+  const cid = clean(convId)
+  const u   = clean(uid)
+  if (!cid || !u) return
 
-  // Guard: only write if THIS uid is currently authenticated
-  // This prevents the Firebase SDK from logging permission_denied
-  // when the auth token is temporarily unavailable (navigation, reconnect)
-  if (currentUid() !== safeUid) return
+  // Only write if this UID is currently authenticated — prevents permission_denied spam
+  if (currentUid() !== u) return
 
-  const nodeRef = getTypingRef(safeConvId, safeUid)
+  const nodeRef = ref(rtdb, `typing/${cid}/${u}`)
   try {
     if (isTyping) {
       await set(nodeRef, { typing: true, ts: Date.now() })
@@ -49,81 +47,70 @@ async function writeTypingState(convId, uid, isTyping) {
       await remove(nodeRef)
     }
   } catch (err) {
-    if (!isPermissionDenied(err)) {
-      console.warn('[typing] write error:', err?.message || err)
-    }
+    if (!isPermDenied(err)) console.warn('[typing]', err?.message || err)
   }
 }
 
-/** Call on every keystroke — one write per burst, not per keystroke */
+/** Call on each keystroke. One RTDB write per burst, not per key. */
 export function debounceTyping(convId, uid, isTyping, delay = DEBOUNCE_MS) {
-  const safeConvId = clean(convId)
-  const safeUid    = clean(uid)
-  if (!safeConvId || !safeUid) return
+  const cid = clean(convId)
+  const u   = clean(uid)
+  if (!cid || !u) return
 
-  const key      = `${safeConvId}:${safeUid}`
-  const existing = typingTimers.get(key)
-  if (existing) { clearTimeout(existing); typingTimers.delete(key) }
+  const key = `${cid}:${u}`
+  const t   = timers.get(key)
+  if (t) { clearTimeout(t); timers.delete(key) }
 
-  if (!isTyping) {
-    void writeTypingState(safeConvId, safeUid, false)
-    return
-  }
+  if (!isTyping) { void writeTyping(cid, u, false); return }
 
-  void writeTypingState(safeConvId, safeUid, true)
+  void writeTyping(cid, u, true)
 
-  const timer = setTimeout(() => {
-    void writeTypingState(safeConvId, safeUid, false)
-    typingTimers.delete(key)
-  }, delay)
-
-  typingTimers.set(key, timer)
+  timers.set(key, setTimeout(() => {
+    void writeTyping(cid, u, false)
+    timers.delete(key)
+  }, delay))
 }
 
-/** Immediate set — call after send to clear typing state */
+/** Immediate clear — call after message is sent */
 export function setTyping(convId, uid, isTyping) {
   if (currentUid() !== clean(uid)) return
-  void writeTypingState(convId, uid, isTyping)
+  void writeTyping(convId, uid, isTyping)
 }
 
-/** Force stop — clears timer AND writes false */
+/** Force stop + clear timer */
 export function stopTypingNow(convId, uid) {
-  const safeConvId = clean(convId)
-  const safeUid    = clean(uid)
-  if (!safeConvId || !safeUid) return
-
-  const key = `${safeConvId}:${safeUid}`
-  const t   = typingTimers.get(key)
-  if (t) { clearTimeout(t); typingTimers.delete(key) }
-
-  if (currentUid() === safeUid) void writeTypingState(safeConvId, safeUid, false)
+  const cid = clean(convId)
+  const u   = clean(uid)
+  if (!cid || !u) return
+  const t = timers.get(`${cid}:${u}`)
+  if (t) { clearTimeout(t); timers.delete(`${cid}:${u}`) }
+  if (currentUid() === u) void writeTyping(cid, u, false)
 }
 
 export function watchTyping(convId, callback) {
-  const safeConvId = clean(convId)
-  if (!safeConvId) return () => {}
+  const cid = clean(convId)
+  if (!cid) return () => {}
 
-  const unsub = onValue(
-    ref(rtdb, `typing/${safeConvId}`),
+  return onValue(
+    ref(rtdb, `typing/${cid}`),
     snap => {
-      const raw = snap.val() || {}
-      const now = Date.now()
-      const active = Object.fromEntries(
+      const raw  = snap.val() || {}
+      const now  = Date.now()
+      const live = Object.fromEntries(
         Object.entries(raw).filter(([, v]) => v?.ts && now - v.ts < STALE_MS)
       )
-      callback(active)
+      callback(live)
     },
     err => {
-      if (!isPermissionDenied(err)) console.warn('[typing] watch error:', err?.message || err)
+      if (!isPermDenied(err)) console.warn('[typing] watch', err?.message || err)
       callback({})
     }
   )
-  return unsub
 }
 
 export function useTyping(convId, uid) {
   const [typingUsers, setTypingUsers] = useState({})
-  const prevRef = useRef(false)
+  const prev = useRef(false)
 
   useEffect(() => {
     if (!convId) return
@@ -132,8 +119,8 @@ export function useTyping(convId, uid) {
 
   function sendTyping(isTyping) {
     const next = Boolean(isTyping)
-    if (prevRef.current === next && !next) return
-    prevRef.current = next
+    if (prev.current === next && !next) return
+    prev.current = next
     debounceTyping(convId, uid, next)
   }
 
