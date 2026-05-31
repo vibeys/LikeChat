@@ -14,6 +14,7 @@ import {
   orderBy,
   limitToLast,
   serverTimestamp,
+  increment,
   arrayUnion,
   arrayRemove,
 } from 'firebase/firestore'
@@ -320,9 +321,7 @@ export async function sendMessage(convId, {
 
   const unreadUpdates = {}
   members.forEach(uid => {
-    unreadUpdates[`unreadCount.${uid}`] = uid === senderId
-      ? 0
-      : (convData.unreadCount?.[uid] || 0) + 1
+    unreadUpdates[`unreadCount.${uid}`] = uid === senderId ? 0 : increment(1)
   })
 
   const preview = text || (
@@ -605,7 +604,7 @@ export function watchMessages(convId, callback) {
   const q = query(
     collection(db, 'conversations', convId, 'messages'),
     orderBy('createdAt', 'desc'),
-    limitToLast(200)
+    limitToLast(50)
   )
 
   return onSnapshot(

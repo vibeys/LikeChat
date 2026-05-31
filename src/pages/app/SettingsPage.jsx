@@ -76,10 +76,10 @@ export default function SettingsPage() {
 
   const [privacy, setPrivacy] = useState({
     profileVisible:   'friends',
-    showLastSeen:     true,
-    showOnlineStatus: true,
-    allowFriendReqs:  true,
-    readReceipts:     true,
+    lastSeenVisibility:     'friends',
+    onlineStatusVisibility: 'friends',
+    allowFriendReqs:  'all',
+    readReceipts:     'all',
   })
 
   const [notifs, setNotifs] = useState({
@@ -95,17 +95,15 @@ export default function SettingsPage() {
   const [stats,          setStats]          = useState(null)
 
   // ── Sync user data into local state ──────────────────────────────────────
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!user) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user.privacy)       setPrivacy(prev => ({ ...prev, ...user.privacy }))
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user.notifications) setNotifs(prev  => ({ ...prev, ...user.notifications }))
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPhoneNumber(user.phone || '')
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPhoneStatus(user.phoneVerified ? 'Verified' : '')
   }, [user])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // ── Keep dark-mode in sync across tabs ───────────────────────────────────
   useEffect(() => {
@@ -182,7 +180,7 @@ export default function SettingsPage() {
       await savePrivacySettings(user.uid, privacy)
       await refreshUser()
       // Update Firestore presence immediately so online status change is live
-      goOnline(user.uid, privacy.showOnlineStatus)
+      goOnline(user.uid, privacy.onlineStatusVisibility === 'friends')
       toast.success('Privacy settings saved!')
       setModal(null)
     } catch (err) {
@@ -520,35 +518,52 @@ export default function SettingsPage() {
             </div>
 
             <FieldLabel>Activity &amp; Visibility</FieldLabel>
-            <div style={S.toggleList}>
-              <ToggleRow
-                icon={<Eye size={15} />}        iconColor="#3b82f6"
+            <div style={S.prefsGrid}>
+              <PreferenceDropdown
+                icon={<Eye size={15} />}
+                iconColor="#3b82f6"
                 label="Last seen"
-                sub="Show friends when you were last active"
-                value={privacy.showLastSeen}
-                onChange={v => setPrivacy(prev => ({ ...prev, showLastSeen: v }))}
+                value={privacy.lastSeenVisibility}
+                options={[
+                  { value: 'friends', label: 'Friends only', icon: Users },
+                  { value: 'nobody', label: 'Nobody', icon: EyeSlash },
+                ]}
+                onChange={v => setPrivacy(prev => ({ ...prev, lastSeenVisibility: v }))}
               />
-              <ToggleRow
-                icon={<WifiHigh size={15} />}   iconColor="#22c55e"
+              <PreferenceDropdown
+                icon={<WifiHigh size={15} />}
+                iconColor="#22c55e"
                 label="Online status"
-                sub="Show friends when you're currently active"
-                value={privacy.showOnlineStatus}
-                onChange={v => setPrivacy(prev => ({ ...prev, showOnlineStatus: v }))}
+                value={privacy.onlineStatusVisibility}
+                options={[
+                  { value: 'friends', label: 'Friends only', icon: Users },
+                  { value: 'nobody', label: 'Nobody', icon: EyeSlash },
+                ]}
+                onChange={v => setPrivacy(prev => ({ ...prev, onlineStatusVisibility: v }))}
               />
-              <ToggleRow
-                icon={<UserPlus size={15} />}   iconColor="#8b5cf6"
+              <PreferenceDropdown
+                icon={<UserPlus size={15} />}
+                iconColor="#8b5cf6"
                 label="Friend requests"
-                sub="Allow others to send you friend requests"
                 value={privacy.allowFriendReqs}
+                options={[
+                  { value: 'all', label: 'Everyone', icon: Users },
+                  { value: 'friends', label: 'Friends only', icon: Check },
+                  { value: 'nobody', label: 'Nobody', icon: XCircle },
+                ]}
                 onChange={v => setPrivacy(prev => ({ ...prev, allowFriendReqs: v }))}
               />
-              <ToggleRow
-                icon={<CheckCircle size={15} />} iconColor="#f59e0b"
+              <PreferenceDropdown
+                icon={<CheckCircle size={15} />}
+                iconColor="#f59e0b"
                 label="Read receipts"
-                sub="Let others see when you've read their messages"
                 value={privacy.readReceipts}
+                options={[
+                  { value: 'all', label: 'Everyone', icon: Users },
+                  { value: 'friends', label: 'Friends only', icon: Check },
+                  { value: 'nobody', label: 'Nobody', icon: XCircle },
+                ]}
                 onChange={v => setPrivacy(prev => ({ ...prev, readReceipts: v }))}
-                last
               />
             </div>
 
@@ -915,6 +930,93 @@ function SaveBtn({ onClick, saving, label = 'Save', accentColor }) {
   )
 }
 
+function PreferenceDropdown({ icon, iconColor, label, value, options, onChange }) {
+  const [open, setOpen] = useState(false)
+  const selectedOption = options.find(o => o.value === value)
+  const OptionIcon = selectedOption?.icon
+  
+  return (
+    <motion.button
+      onClick={() => setOpen(!open)}
+      whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
+      whileTap={{ scale: 0.98 }}
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+        padding: '13px 14px', border: '1px solid var(--border)', borderRadius: 12,
+        background: 'var(--bg-2)', cursor: 'pointer', position: 'relative', marginBottom: 10,
+        flexDirection: 'row', justifyContent: 'space-between',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: iconColor ? `${iconColor}1a` : 'var(--bg-secondary)',
+          color: iconColor || 'var(--text-secondary)',
+        }}>
+          {icon}
+        </div>
+        <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{label}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-3)' }}>{selectedOption?.label}</p>
+        </div>
+      </div>
+      <CaretRight size={14} style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+      
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: '100%', left: 0, right: 0,
+              marginTop: 4, borderRadius: 12, border: '1px solid var(--border)',
+              background: 'var(--bg-2)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+              zIndex: 50, overflow: 'hidden',
+            }}
+          >
+            {options.map((opt) => {
+              const OptIconComponent = opt.icon
+              const isSelected = opt.value === value
+              return (
+                <motion.button
+                  key={opt.value}
+                  onClick={() => {
+                    onChange(opt.value)
+                    setOpen(false)
+                  }}
+                  whileHover={{ backgroundColor: 'var(--bg-3)' }}
+                  whileTap={{ scale: 0.98 }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '12px 14px', border: 'none', background: isSelected ? 'rgba(30,144,255,0.08)' : 'transparent',
+                    color: isSelected ? 'var(--primary)' : 'var(--text-1)', cursor: 'pointer',
+                    fontWeight: isSelected ? 700 : 500, fontSize: 13, borderBottom: '1px solid var(--border)', textAlign: 'left',
+                  }}
+                >
+                  <div style={{
+                    width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: isSelected ? 'rgba(30,144,255,0.15)' : 'var(--bg-3)',
+                    color: isSelected ? 'var(--primary)' : 'var(--text-3)',
+                  }}>
+                    <OptIconComponent size={14} />
+                  </div>
+                  <span>{opt.label}</span>
+                  {isSelected && <Check size={14} weight="bold" style={{ marginLeft: 'auto', flexShrink: 0 }} />}
+                </motion.button>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.button>
+  )
+}
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const S = {
   page:    { height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' },
@@ -922,6 +1024,7 @@ const S = {
   backBtn: { width: 34, height: 34, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 },
   headerTitle: { margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' },
   content: { flex: 1, overflowY: 'auto', padding: '0 14px 32px' },
+  prefsGrid: { display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 },
 
   // Profile card
   profileCard:   { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 14px', marginTop: 14, borderRadius: 16, background: 'var(--bg-primary)', border: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left' },

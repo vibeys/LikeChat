@@ -1,5 +1,6 @@
 // src/components/MessageInput.jsx
 import { useState, useRef, useEffect } from 'react'
+import toast from 'react-hot-toast'
 import { PaperPlaneRight, Paperclip, Smiley, X, Image, Video, File, Megaphone, At } from '@phosphor-icons/react'
 import { debounceTyping, setTyping } from '../lib/typing'
 import { sendMessage, uploadFile, sendAnnouncement, sendMentionNotif } from '../services/chatService'
@@ -316,6 +317,10 @@ export default function MessageInput({
   )
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function extractMentionedUids(text, memberNames) {
   if (!text || !memberNames) return []
 
@@ -327,8 +332,9 @@ function extractMentionedUids(text, memberNames) {
 
   const mentioned = new Set()
   for (const { uid, name } of mentions) {
-    const token = `@${name}`
-    if (normalized.includes(token)) mentioned.add(uid)
+    const escaped = escapeRegExp(name).replace(/\s+/g, '\\s+')
+    const regex = new RegExp(`@${escaped}(?=$|\\s|[.,!?;:\\-_/])`, 'g')
+    if (regex.test(normalized)) mentioned.add(uid)
   }
 
   return [...mentioned]
