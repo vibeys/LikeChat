@@ -12,7 +12,7 @@ import {
   query,
   where,
   orderBy,
-  limit,
+  limitToLast,
   serverTimestamp,
   arrayUnion,
   arrayRemove,
@@ -81,7 +81,7 @@ export async function createGroupConv(creatorUid, groupName, memberUids, names =
   const creatorName = names[creatorUid] || 'Someone'
   const creatorPhoto = photos[creatorUid] || ''
 
-  memberUids.forEach(uid => {
+  const inviteTasks = memberUids.map(uid =>
     sendNotification(uid, {
       type: 'group_invite',
       title: `${creatorName} invited you to a group`,
@@ -91,9 +91,10 @@ export async function createGroupConv(creatorUid, groupName, memberUids, names =
       fromPhoto: creatorPhoto,
       convId: convRef.id,
       groupName,
-    }).catch(console.error)
-  })
+    }).catch(err => console.error(`Group invite notif failed for ${uid}:`, err))
+  )
 
+  await Promise.allSettled(inviteTasks)
   return convRef.id
 }
 
@@ -603,13 +604,18 @@ export function watchMessages(convId, callback) {
 
   const q = query(
     collection(db, 'conversations', convId, 'messages'),
-    orderBy('createdAt', 'asc'),
-    limit(200)
+    orderBy('createdAt', 'desc'),
+    limitToLast(200)
   )
 
   return onSnapshot(
     q,
-    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    snap => {
+      const messages = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .reverse()
+      callback(messages)
+    },
     err => console.warn('watchMessages:', err.message)
   )
 }

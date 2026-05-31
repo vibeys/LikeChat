@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../../context/AuthContext'
-import { logout, deleteAccount } from '../../services/authService'
+import { logout, deleteAccount, sendPhoneOTP, verifyPhoneOTP } from '../../services/authService'
+import { updateProfile } from '../../services/userService'
 import {
   changePassword,
   savePrivacySettings,
@@ -63,6 +64,13 @@ export default function SettingsPage() {
   const [deleteModal, setDeleteModal] = useState(false)
   const [darkMode,    setDarkMode]    = useState(() => getInitialTheme())
 
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [otpCode,     setOtpCode]     = useState('')
+  const [otpSent,     setOtpSent]     = useState(false)
+  const [phoneLoading, setPhoneLoading] = useState(false)
+  const [verifyLoading, setVerifyLoading] = useState(false)
+  const [phoneStatus, setPhoneStatus] = useState('')
+
   const [pw,    setPw]    = useState({ current: '', next: '', confirm: '' })
   const [pwVis, setPwVis] = useState({ current: false, next: false, confirm: false })
 
@@ -89,8 +97,14 @@ export default function SettingsPage() {
   // ── Sync user data into local state ──────────────────────────────────────
   useEffect(() => {
     if (!user) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user.privacy)       setPrivacy(prev => ({ ...prev, ...user.privacy }))
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user.notifications) setNotifs(prev  => ({ ...prev, ...user.notifications }))
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPhoneNumber(user.phone || '')
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPhoneStatus(user.phoneVerified ? 'Verified' : '')
   }, [user])
 
   // ── Keep dark-mode in sync across tabs ───────────────────────────────────
@@ -105,6 +119,7 @@ export default function SettingsPage() {
   // ── Load blocked users when that modal opens ──────────────────────────────
   useEffect(() => {
     if (modal !== M.BLOCKED || !user?.uid) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingBlocked(true)
     loadBlockedProfiles(user.uid)
       .then(setBlockedUsers)
@@ -197,6 +212,42 @@ export default function SettingsPage() {
     } catch { toast.error('Failed to unblock user') }
   }
 
+  async function handleSendPhoneOTP() {
+    if (!phoneNumber.trim()) return toast.error('Enter your phone number')
+    setPhoneLoading(true)
+    try {
+      await sendPhoneOTP(phoneNumber.trim())
+      setOtpSent(true)
+      setPhoneStatus('Verification code sent. Enter the code below.')
+      toast.success('OTP sent to your phone')
+    } catch (err) {
+      console.error('sendPhoneOTP failed:', err)
+      toast.error(err?.message || 'Failed to send OTP. Please try again.')
+    } finally {
+      setPhoneLoading(false)
+    }
+  }
+
+  async function handleVerifyPhoneOTP() {
+    if (!otpCode.trim()) return toast.error('Enter the verification code')
+    if (!user?.uid) return toast.error('User not found')
+    setVerifyLoading(true)
+    try {
+      await verifyPhoneOTP(otpCode.trim())
+      await updateProfile(user.uid, { phoneVerified: true, phone: phoneNumber.trim() })
+      await refreshUser()
+      setPhoneStatus('Phone number verified successfully')
+      setOtpCode('')
+      setOtpSent(false)
+      toast.success('Phone number verified!')
+    } catch (err) {
+      console.error('verifyPhoneOTP failed:', err)
+      toast.error(err?.message || 'Failed to verify code. Please try again.')
+    } finally {
+      setVerifyLoading(false)
+    }
+  }
+
   async function handleLogout() {
     try { await logout(); navigate('/login') }
     catch (err) { toast.error(err?.message || 'Failed to log out') }
@@ -258,6 +309,63 @@ export default function SettingsPage() {
           </div>
           <CaretRight size={15} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
         </motion.button>
+
+        <div style={{ marginTop: 18, marginBottom: 24, padding: 20, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <ShieldCheck size={18} style={{ color: user.phoneVerified ? '#22c55e' : '#f59e0b' }} />
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, color: 'var(--text-1)' }}>Phone verification</p>
+              <p style={{ margin: 0, color: 'var(--text-3)', fontSize: 13 }}>
+                {user.phoneVerified ? 'Your phone is verified.' : 'Verify your phone number for stronger account trust.'}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: 12 }}>
+            <input
+              type="tel"
+              value={phoneNumber}
+              onChange={e => setPhoneNumber(e.target.value)}
+              placeholder="+1 234 567 8900"
+              disabled={user.phoneVerified}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-1)', color: 'var(--text-1)' }}
+            />
+            {!user.phoneVerified && (
+              <button
+                onClick={handleSendPhoneOTP}
+                disabled={phoneLoading || !phoneNumber.trim()}
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: phoneLoading || !phoneNumber.trim() ? 'not-allowed' : 'pointer', opacity: phoneLoading || !phoneNumber.trim() ? 0.6 : 1 }}
+              >
+                {phoneLoading ? 'Sending code…' : 'Send verification code'}
+              </button>
+            )}
+
+            {otpSent && !user.phoneVerified && (
+              <>
+                <input
+                  type="text"
+                  value={otpCode}
+                  onChange={e => setOtpCode(e.target.value)}
+                  placeholder="Enter verification code"
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-1)', color: 'var(--text-1)' }}
+                />
+                <button
+                  onClick={handleVerifyPhoneOTP}
+                  disabled={verifyLoading || !otpCode.trim()}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 700, cursor: verifyLoading || !otpCode.trim() ? 'not-allowed' : 'pointer', opacity: verifyLoading || !otpCode.trim() ? 0.6 : 1 }}
+                >
+                  {verifyLoading ? 'Verifying…' : 'Verify code'}
+                </button>
+              </>
+            )}
+
+            {phoneStatus && (
+              <p style={{ margin: 0, color: user.phoneVerified ? '#22c55e' : 'var(--text-3)', fontSize: 13 }}>
+                {phoneStatus}
+              </p>
+            )}
+          </div>
+        </div>
 
         {/* ── PREFERENCES ─────────────────────────────────────────────── */}
         <SectionLabel label="Preferences" />
@@ -344,6 +452,7 @@ export default function SettingsPage() {
         </div>
 
         <p style={S.versionTag}>LikeChat · v1.0</p>
+        <div id="recaptcha-container" style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
       </div>
 
       {/* ── MODALS ───────────────────────────────────────────────────── */}
@@ -787,8 +896,7 @@ function FieldLabel({ children }) {
 }
 
 function SaveBtn({ onClick, saving, label = 'Save', accentColor }) {
-  const bg  = accentColor || 'var(--primary)'
-  const hex = accentColor?.startsWith('#') ? accentColor : '30,144,255'
+  const bg = accentColor || 'var(--primary)'
   return (
     <motion.button
       onClick={onClick}

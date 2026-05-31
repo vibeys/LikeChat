@@ -723,6 +723,7 @@ function ConvoItem({ convo, user, presence, getOtherUid, isActive, onClick }) {
 // ─── New Group Modal ──────────────────────────────────────────────────────────
 
 function NewGroupModal({ user, onClose, onCreated }) {
+  const searchTimer = useRef(null)
   const [groupName, setGroupName] = useState('')
   const [searchQ,   setSearchQ]   = useState('')
   const [results,   setResults]   = useState([])
@@ -730,19 +731,35 @@ function NewGroupModal({ user, onClose, onCreated }) {
   const [searching, setSearching] = useState(false)
   const [creating,  setCreating]  = useState(false)
 
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current)
+    }
+  }, [])
+
   async function handleSearch(e) {
     const q = e.target.value
     setSearchQ(q)
-    if (!q.trim()) { setResults([]); return }
-    setSearching(true)
-    try {
-      const res = await searchByUsername(q.trim())
-      setResults((res || []).filter(u => u.uid !== user.uid))
-    } catch {
-      toast.error('Search failed')
-    } finally {
+
+    if (!q.trim()) {
+      setResults([])
       setSearching(false)
+      if (searchTimer.current) clearTimeout(searchTimer.current)
+      return
     }
+
+    setSearching(true)
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await searchByUsername(q.trim())
+        setResults((res || []).filter(u => u.uid !== user.uid))
+      } catch {
+        toast.error('Search failed')
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
   }
 
   function toggle(u) {

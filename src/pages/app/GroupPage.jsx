@@ -51,6 +51,7 @@ export default function GroupPage() {
   const { user }   = useAuth()
   const navigate   = useNavigate()
   const fileRef    = useRef(null)
+  const searchTimer = useRef(null)
 
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
@@ -159,32 +160,46 @@ export default function GroupPage() {
     )
   }
 
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current)
+    }
+  }, [])
+
   async function handleSearch(e) {
     const q = e.target.value
     setSearchQ(q)
 
-    if (!q.trim()) { setResults([]); return }
+    if (!q.trim()) {
+      setResults([])
+      setSearching(false)
+      if (searchTimer.current) clearTimeout(searchTimer.current)
+      return
+    }
 
     setSearching(true)
-    try {
-      const res = await searchByUsername(q.trim())
-      const list = Array.isArray(res) ? res : []
-      const currentMembers = convo?.members        || []
-      const currentPending = convo?.pendingMembers  || []
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await searchByUsername(q.trim())
+        const list = Array.isArray(res) ? res : []
+        const currentMembers = convo?.members        || []
+        const currentPending = convo?.pendingMembers  || []
 
-      setResults(
-        list.filter(
-          u =>
-            u.uid !== user.uid &&
-            !currentMembers.includes(u.uid) &&
-            !currentPending.includes(u.uid)
+        setResults(
+          list.filter(
+            u =>
+              u.uid !== user.uid &&
+              !currentMembers.includes(u.uid) &&
+              !currentPending.includes(u.uid)
+          )
         )
-      )
-    } catch {
-      toast.error('Search failed')
-    } finally {
-      setSearching(false)
-    }
+      } catch {
+        toast.error('Search failed')
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
   }
 
   async function handleSaveInfo() {

@@ -137,8 +137,9 @@ export default function ChatWindow() {
   }, [convo, user?.uid])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    isAtBottom.current = true
+    if (isAtBottom.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages.length])
 
   useEffect(() => {

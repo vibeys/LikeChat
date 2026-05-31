@@ -59,7 +59,7 @@ export default function MessageInput({
 
     const cursor = e.target.selectionStart
     const before = val.slice(0, cursor)
-    const match  = before.match(/@(\w*)$/)
+    const match  = before.match(/@([^\n@]*)$/)
     if (isGroup && match) {
       setMentionQuery(match[1])
       setShowMentions(true)
@@ -81,7 +81,7 @@ export default function MessageInput({
     const cursor   = textareaRef.current?.selectionStart || text.length
     const before   = text.slice(0, cursor)
     const after    = text.slice(cursor)
-    const replaced = before.replace(/@(\w*)$/, `@${name} `)
+    const replaced = before.replace(/@([^\n@]*)$/, `@${name} `)
     setText(replaced + after)
     setShowMentions(false)
     setMentionQuery('')
@@ -146,6 +146,12 @@ export default function MessageInput({
   const handleFileUpload = async (e, forcedType) => {
     const file = e.target.files[0]
     if (!file || !currentUser?.uid) return
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error('Please choose a file smaller than 25MB')
+      e.target.value = ''
+      return
+    }
+
     setLoading(true)
     setShowAttach(false)
     try {
@@ -164,6 +170,7 @@ export default function MessageInput({
       onCancelReply?.()
     } catch (err) {
       console.error('File upload error:', err)
+      toast.error(err?.message || 'Failed to upload file')
     } finally {
       setLoading(false)
       e.target.value = ''
@@ -310,14 +317,20 @@ export default function MessageInput({
 }
 
 function extractMentionedUids(text, memberNames) {
+  if (!text || !memberNames) return []
+
+  const normalized = text.toLowerCase()
+  const mentions = Object.entries(memberNames)
+    .filter(([, name]) => typeof name === 'string' && name.trim())
+    .map(([uid, name]) => ({ uid, name: name.trim().toLowerCase() }))
+    .sort((a, b) => b.name.length - a.name.length)
+
   const mentioned = new Set()
-  const nameToUid = {}
-  Object.entries(memberNames).forEach(([uid, name]) => { nameToUid[name.toLowerCase()] = uid })
-  const matches = text.matchAll(/@(\w+(?:\s\w+)?)/g)
-  for (const m of matches) {
-    const uid = nameToUid[m[1].toLowerCase()]
-    if (uid) mentioned.add(uid)
+  for (const { uid, name } of mentions) {
+    const token = `@${name}`
+    if (normalized.includes(token)) mentioned.add(uid)
   }
+
   return [...mentioned]
 }
 

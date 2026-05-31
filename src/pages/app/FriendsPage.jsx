@@ -31,6 +31,7 @@ export default function FriendsPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const mounted = useRef(true)
+  const searchTimer = useRef(null)
 
   const [tab, setTab] = useState('friends')
   const [friends, setFriends] = useState([])
@@ -46,6 +47,7 @@ export default function FriendsPage() {
     mounted.current = true
     return () => {
       mounted.current = false
+      if (searchTimer.current) clearTimeout(searchTimer.current)
     }
   }, [])
 
@@ -104,20 +106,25 @@ export default function FriendsPage() {
 
     if (!q.trim()) {
       setResults([])
+      setSearching(false)
+      if (searchTimer.current) clearTimeout(searchTimer.current)
       return
     }
 
     setSearching(true)
-    try {
-      const res = await searchByUsername(q.trim())
-      if (mounted.current) {
-        setResults((res || []).filter(u => u.uid !== user.uid))
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await searchByUsername(q.trim())
+        if (mounted.current) {
+          setResults((res || []).filter(u => u.uid !== user.uid))
+        }
+      } catch {
+        toast.error('Search failed')
+      } finally {
+        if (mounted.current) setSearching(false)
       }
-    } catch {
-      toast.error('Search failed')
-    } finally {
-      if (mounted.current) setSearching(false)
-    }
+    }, 300)
   }
 
   async function handleSendRequest(targetUid) {

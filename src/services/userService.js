@@ -6,6 +6,9 @@ import {
   query,
   where,
   getDocs,
+  orderBy,
+  startAt,
+  endAt,
   serverTimestamp,
 } from 'firebase/firestore'
 import { updateProfile as firebaseUpdateProfile } from 'firebase/auth'
@@ -76,19 +79,32 @@ export async function uploadProfilePhoto(uid, file) {
 }
 
 export async function searchByUsername(username) {
+  const trimmed = username.toLowerCase().trim()
+  if (!trimmed) return []
+
   const q = query(
     collection(db, 'users'),
-    where('username', '==', username.toLowerCase().trim())
+    orderBy('username'),
+    startAt(trimmed),
+    endAt(`${trimmed}\uf8ff`)
   )
   const snap = await getDocs(q)
   return snap.docs.map(d => withDefaults({ uid: d.id, ...d.data() }))
 }
 
 export async function completeSetup(uid, { displayName, username, bio, photoFile }) {
-  let photoURL = ''
+  const existingSnap = await getDoc(doc(db, 'users', uid))
+  const existing = existingSnap.exists() ? existingSnap.data() : {}
+
+  let photoURL = existing.photoURL || ''
   if (photoFile) {
     photoURL = await uploadToCloudinary(photoFile, 'avatars')
   }
+
+  const emailVerified = existing.emailVerified ?? auth.currentUser?.emailVerified ?? false
+  const phoneVerified = existing.phoneVerified ?? false
+  const phone = existing.phone ?? ''
+  const createdAt = existing.createdAt || serverTimestamp()
 
   await setDoc(
     doc(db, 'users', uid),
@@ -98,18 +114,18 @@ export async function completeSetup(uid, { displayName, username, bio, photoFile
       username: username.toLowerCase().trim(),
       bio: bio?.trim() ?? '',
       photoURL,
-      emailVerified: false,
-      phoneVerified: false,
-      phone: '',
+      emailVerified,
+      phoneVerified,
+      phone,
       status: 'offline',
       setupComplete: true,
       lastSeen: serverTimestamp(),
-      createdAt: serverTimestamp(),
-      pinnedConvs: [],
-      mutedConvs: [],
-      blockedUsers: [],
-      privacy: DEFAULT_PRIVACY,
-      notifications: DEFAULT_NOTIFICATIONS,
+      createdAt,
+      pinnedConvs: existing.pinnedConvs || [],
+      mutedConvs: existing.mutedConvs || [],
+      blockedUsers: existing.blockedUsers || [],
+      privacy: existing.privacy ? sanitizePrivacy(existing.privacy) : DEFAULT_PRIVACY,
+      notifications: existing.notifications ? sanitizeNotifications(existing.notifications) : DEFAULT_NOTIFICATIONS,
     },
     { merge: true }
   )

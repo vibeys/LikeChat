@@ -4,7 +4,7 @@ import {
   serverTimestamp, arrayUnion, getDoc,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { sendNotification } from './notificationService'
+import { sendNotification, sendFriendAcceptedNotification } from './notificationService'
 import { canReceiveFriendRequests } from './settingsService'
 
 // ── SEND FRIEND REQUEST ───────────────────────────────────
@@ -55,6 +55,14 @@ export async function cancelFriendRequest(myUid, theirUid) {
 export async function acceptFriendRequest(myUid, theirUid) {
   await updateDoc(doc(db, 'friends', myUid, 'list', theirUid), { status: 'accepted' })
   await updateDoc(doc(db, 'friends', theirUid, 'list', myUid), { status: 'accepted' })
+
+  const senderSnap = await getDoc(doc(db, 'users', myUid))
+  const senderData = senderSnap.data() || {}
+  await sendFriendAcceptedNotification(theirUid, {
+    fromUid: myUid,
+    fromName: senderData.displayName || 'Someone',
+    fromPhoto: senderData.photoURL || '',
+  }).catch(err => console.error('Friend accepted notification failed:', err))
 }
 
 // ── DECLINE FRIEND REQUEST ────────────────────────────────

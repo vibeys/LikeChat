@@ -3,32 +3,51 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAuth() { return request.auth != null; }
     function isOwner(uid) { return isAuth() && request.auth.uid == uid; }
+    function isMember(convId) {
+      let conv = get(/databases/$(database)/documents/conversations/$(convId));
+      return isAuth() && conv.exists() && request.auth.uid in conv.data.members;
+    }
+    function isCallParticipant(callId) {
+      let call = get(/databases/$(database)/documents/calls/$(callId));
+      return isAuth() && call.exists() &&
+        (request.auth.uid == call.data.callerId || request.auth.uid == call.data.calleeId);
+    }
 
     match /users/{uid} {
-      allow read, write: if isAuth();
+      allow read: if isAuth();
+      allow create, update, delete: if isOwner(uid);
     }
     match /friends/{uid}/list/{contactUid} {
-      allow read, write: if isAuth();
+      allow read: if isOwner(uid);
+      allow create, update, delete: if isAuth() && (request.auth.uid == uid || request.auth.uid == contactUid);
     }
     match /contacts/{uid}/list/{contactUid} {
       allow read, write: if isOwner(uid);
     }
     match /conversations/{convId} {
-      allow read, write: if isAuth();
+      allow read: if isMember(convId);
+      allow create: if isAuth() && request.auth.uid in request.resource.data.members;
+      allow update: if isMember(convId);
+
       match /messages/{msgId} {
-        allow read, write: if isAuth();
+        allow read: if isMember(convId);
+        allow create: if isMember(convId) && request.auth.uid == request.resource.data.senderId;
+        allow update: if isMember(convId);
+        allow delete: if false;
       }
     }
     match /notifications/{uid}/items/{notifId} {
-      allow read, write: if isAuth();
+      allow read, write: if isOwner(uid);
     }
     match /calls/{callId} {
-      allow read, write: if isAuth();
+      allow create: if isAuth();
+      allow read, update, delete: if isCallParticipant(callId);
+
       match /callerCandidates/{candidateId} {
-        allow read, write: if isAuth();
+        allow read, write: if isCallParticipant(callId);
       }
       match /calleeCandidates/{candidateId} {
-        allow read, write: if isAuth();
+        allow read, write: if isCallParticipant(callId);
       }
     }
   }

@@ -1,6 +1,6 @@
 // src/pages/auth/UpdatePass.jsx
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router'
+import { useNavigate, useSearchParams, Link } from 'react-router'
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth'
 import { auth } from '../../lib/firebase'
 import { Button, Input } from '../../components/UI'
@@ -15,8 +15,8 @@ export default function UpdatePass() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [form, setForm] = useState({ password: '', confirm: '' })
 
-  // Get oobCode from URL ?oobCode=xxx
-  const oobCode = new URLSearchParams(window.location.search).get('oobCode')
+  const [searchParams] = useSearchParams()
+  const oobCode = searchParams.get('oobCode')
 
   async function handleSubmit(e) {
     e.preventDefault()

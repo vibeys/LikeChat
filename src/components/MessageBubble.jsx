@@ -2,15 +2,29 @@ import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Check, Checks, ArrowBendUpRight, Smiley, Trash, FileText, Download, Play } from '@phosphor-icons/react'
 import { formatTime } from '../lib/utils'
-import { addReaction, removeReaction, softDeleteMessage } from '../services/chatService'
+import { addReaction, removeReaction, softDeleteMessage, unsendMessage } from '../services/chatService'
 
 const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '👎']
 
-function renderWithMentions(text) {
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function renderWithMentions(text, memberNames = {}) {
   if (!text || !text.includes('@')) return text
-  const parts = text.split(/(@\w+(?:\s\w+)?)/g)
+
+  const mentions = Object.values(memberNames)
+    .filter(Boolean)
+    .map(name => `@${name}`)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+
+  if (!mentions.length) return text
+
+  const regex = new RegExp(`(${mentions.join('|')})`, 'i')
+  const parts = text.split(regex)
   return parts.map((part, i) =>
-    part.startsWith('@')
+    regex.test(part)
       ? <span key={i} style={{ color: 'var(--primary)', fontWeight: 700 }}>{part}</span>
       : part
   )
@@ -83,10 +97,10 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
 
   const handleUnsent = async () => {
     try {
-      const { updateDoc, doc } = await import('firebase/firestore')
-      const { db } = await import('../lib/firebase')
-      await updateDoc(doc(db, 'conversations', convId, 'messages', msg.id), { unsent: true, text: '', fileURL: null, fileName: null })
-    } catch (err) { console.error(err) }
+      await unsendMessage(convId, msg.id)
+    } catch (err) {
+      console.error('Unsend failed:', err)
+    }
     setShowActions(false)
   }
 
@@ -118,7 +132,7 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
         </div>
       )
     }
-    return <p className="text-sm whitespace-pre-wrap break-words">{renderWithMentions(msg.text)}</p>
+    return <p className="text-sm whitespace-pre-wrap break-words">{renderWithMentions(msg.text, memberNames)}</p>
   }
 
   const hasReactions = msg.reactions && Object.entries(msg.reactions).some(([, u]) => u?.length > 0)

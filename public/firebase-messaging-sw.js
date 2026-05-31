@@ -1,16 +1,48 @@
 importScripts('https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js')
 importScripts('https://www.gstatic.com/firebasejs/11.0.0/firebase-messaging-compat.js')
 
-firebase.initializeApp({
-  apiKey:            'AIzaSyAUqbngBGAtCZwWzhcfWcGbQVImJz2HXo8',
-  authDomain:        'likechaties.firebaseapp.com',
-  projectId:         'likechaties',
-  storageBucket:     'likechaties.firebasestorage.app',
-  messagingSenderId: '764245011074',
-  appId:             '1:764245011074:web:e06d5ad912c9038640629b',
-})
+let messaging = null
 
-const messaging = firebase.messaging()
+// Firebase config is loaded at runtime from /firebase-config.json.
+// This keeps the service worker free of hardcoded project credentials.
+async function loadFirebaseConfig() {
+  try {
+    const response = await fetch('/firebase-config.json')
+    if (!response.ok) throw new Error('Firebase config missing')
+    return await response.json()
+  } catch (err) {
+    console.warn('FCM service worker: unable to load config:', err)
+    return null
+  }
+}
+
+async function initFirebaseMessaging() {
+  const config = await loadFirebaseConfig()
+  if (!config) return null
+
+  firebase.initializeApp(config)
+  return firebase.messaging()
+}
+
+initFirebaseMessaging().then(m => {
+  messaging = m
+  if (messaging) {
+    messaging.onBackgroundMessage((payload) => {
+      const notifData  = payload.notification || {}
+      const extraData  = payload.data         || {}
+
+      const type  = extraData.type  || 'message'
+      const title = notifData.title || extraData.title || 'LikeChat'
+      const body  = notifData.body  || extraData.body  || ''
+      const icon  = notifData.icon  || extraData.icon  || '/favicon.ico'
+
+      const mergedData = { ...extraData }
+
+      const options = buildNotifOptions(type, title, body, icon, mergedData)
+      self.registration.showNotification(title, options)
+    })
+  }
+})
 
 // ── Notification options per type ─────────────────────────
 function buildNotifOptions(type, title, body, icon, data) {
@@ -86,25 +118,6 @@ function buildNotifOptions(type, title, body, icon, data) {
       }
   }
 }
-
-// ── Background message handler ────────────────────────────
-// Handles both notification+data payloads and data-only payloads.
-messaging.onBackgroundMessage((payload) => {
-  // Support data-only FCM messages (no `notification` key)
-  const notifData  = payload.notification || {}
-  const extraData  = payload.data         || {}
-
-  const type  = extraData.type  || 'message'
-  const title = notifData.title || extraData.title || 'LikeChat'
-  const body  = notifData.body  || extraData.body  || ''
-  const icon  = notifData.icon  || extraData.icon  || '/favicon.ico'
-
-  const mergedData = { ...extraData }
-
-  const options = buildNotifOptions(type, title, body, icon, mergedData)
-
-  self.registration.showNotification(title, options)
-})
 
 // ── Notification click handler ────────────────────────────
 self.addEventListener('notificationclick', (event) => {
