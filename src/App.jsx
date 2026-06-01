@@ -152,7 +152,7 @@ export default function App() {
 
   return (
     <>
-      <Toaster position="top-center" />
+      <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
       <Outlet />
     </>
   )

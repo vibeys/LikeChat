@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../../context/AuthContext'
-import { logout, deleteAccount, sendPhoneOTP, verifyPhoneOTP } from '../../services/authService'
-import { updateProfile } from '../../services/userService'
+import { logout, deleteAccount } from '../../services/authService'
 import {
+  DEFAULT_NOTIFICATIONS,
+  DEFAULT_PRIVACY,
   changePassword,
   savePrivacySettings,
   saveNotificationPrefs,
@@ -19,6 +20,7 @@ import { goOnline } from '../../lib/presence'
 import { getInitials, getAvatarColor } from '../../lib/utils'
 import { Spinner } from '../../components/UI'
 import {
+  At,
   Lock,
   Sun,
   Moon,
@@ -28,7 +30,6 @@ import {
   X,
   Check,
   Users,
-  UserCircle,
   UserPlus,
   SignOut,
   Trash,
@@ -40,21 +41,26 @@ import {
   ShieldCheck,
   WifiHigh,
   ChatCircle,
-  At,
   SpeakerHigh,
   Megaphone,
   Prohibit,
 } from '@phosphor-icons/react'
 import toast from 'react-hot-toast'
 
-const M = {
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const MODAL = {
   PASSWORD:      'password',
   PRIVACY:       'privacy',
   NOTIFICATIONS: 'notifications',
   BLOCKED:       'blocked',
 }
 
+const SPRING_SHEET  = { type: 'spring', stiffness: 360, damping: 30 }
+const SPRING_TOGGLE = { type: 'spring', stiffness: 500, damping: 28 }
+
 // ─────────────────────────────────────────────────────────────────────────────
+
 export default function SettingsPage() {
   const { user, refreshUser } = useAuth()
   const navigate = useNavigate()
@@ -64,60 +70,43 @@ export default function SettingsPage() {
   const [deleteModal, setDeleteModal] = useState(false)
   const [darkMode,    setDarkMode]    = useState(() => getInitialTheme())
 
-  const [phoneNumber, setPhoneNumber] = useState('')
-  const [otpCode,     setOtpCode]     = useState('')
-  const [otpSent,     setOtpSent]     = useState(false)
-  const [phoneLoading, setPhoneLoading] = useState(false)
-  const [verifyLoading, setVerifyLoading] = useState(false)
-  const [phoneStatus, setPhoneStatus] = useState('')
-
   const [pw,    setPw]    = useState({ current: '', next: '', confirm: '' })
   const [pwVis, setPwVis] = useState({ current: false, next: false, confirm: false })
 
-  const [privacy, setPrivacy] = useState({
-    profileVisible:   'friends',
-    lastSeenVisibility:     'friends',
-    onlineStatusVisibility: 'friends',
-    allowFriendReqs:  'all',
-    readReceipts:     'all',
-  })
-
-  const [notifs, setNotifs] = useState({
-    messages:   true,
-    mentions:   true,
-    friendReqs: true,
-    appUpdates: false,
-    sound:      true,
-  })
+  const [privacy, setPrivacy] = useState(DEFAULT_PRIVACY)
+  const [notifs,  setNotifs]  = useState(DEFAULT_NOTIFICATIONS)
 
   const [blockedUsers,   setBlockedUsers]   = useState([])
   const [loadingBlocked, setLoadingBlocked] = useState(false)
   const [stats,          setStats]          = useState(null)
 
-  // ── Sync user data into local state ──────────────────────────────────────
-  /* eslint-disable react-hooks/set-state-in-effect */
+  // ── Sync user preferences into local state ────────────────────────────────
   useEffect(() => {
     if (!user) return
-    if (user.privacy)       setPrivacy(prev => ({ ...prev, ...user.privacy }))
-    if (user.notifications) setNotifs(prev  => ({ ...prev, ...user.notifications }))
-    setPhoneNumber(user.phone || '')
-    setPhoneStatus(user.phoneVerified ? 'Verified' : '')
+    const loaded = { ...DEFAULT_PRIVACY, ...(user.privacy || {}) }
+    setPrivacy({
+      ...loaded,
+      allowFriendReqsVisibility: loaded.allowFriendReqsVisibility === 'all' ? 'friends' : loaded.allowFriendReqsVisibility,
+      readReceiptsVisibility:    loaded.readReceiptsVisibility    === 'all' ? 'friends' : loaded.readReceiptsVisibility,
+    })
+    setNotifs({ ...DEFAULT_NOTIFICATIONS, ...(user.notifications || {}) })
   }, [user])
-  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // ── Keep dark-mode in sync across tabs ───────────────────────────────────
+  // ── Keep dark-mode synced across tabs ─────────────────────────────────────
   useEffect(() => {
     const sync = () => setDarkMode(getInitialTheme())
     const ev   = getThemeEventName()
     window.addEventListener('storage', sync)
     window.addEventListener(ev, sync)
-    return () => { window.removeEventListener('storage', sync); window.removeEventListener(ev, sync) }
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener(ev, sync)
+    }
   }, [])
 
-  // ── Load blocked users when that modal opens ──────────────────────────────
+  // ── Load blocked users when modal opens ───────────────────────────────────
   useEffect(() => {
-    if (modal !== M.BLOCKED || !user?.uid) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (modal !== MODAL.BLOCKED || !user?.uid) return
     setLoadingBlocked(true)
     loadBlockedProfiles(user.uid)
       .then(setBlockedUsers)
@@ -133,27 +122,40 @@ export default function SettingsPage() {
       .catch(() => {})
   }, [user?.uid])
 
-  // ── Derived values for row subtitles ─────────────────────────────────────
-  const privacyLabel = useMemo(() => ({ friends: 'Friends only', nobody: 'Nobody' }), [])
-
-  const notifsOnCount = Object.values(notifs).filter(Boolean).length
+  // ── Derived subtitle values ───────────────────────────────────────────────
+  const notifsOnCount = useMemo(() => Object.values(notifs).filter(Boolean).length, [notifs])
   const notifsTotal   = Object.keys(notifs).length
-  const notifsValue   =
-    notifsOnCount === notifsTotal ? 'All notifications on'
-    : notifsOnCount === 0         ? 'All notifications off'
-    : `${notifsOnCount} of ${notifsTotal} on`
 
-  const privacyValue = `${privacyLabel[privacy.profileVisible] ?? 'Friends only'} · ${privacy.showOnlineStatus ? 'Visible online' : 'Hidden online'}`
+  const notifsValue = useMemo(() => {
+    if (notifsOnCount === notifsTotal) return 'All on'
+    if (notifsOnCount === 0)           return 'All off'
+    return `${notifsOnCount} / ${notifsTotal} on`
+  }, [notifsOnCount, notifsTotal])
+
+  const privacyValue = useMemo(() => {
+    const online = privacy.onlineStatusVisibility === 'friends' ? 'Visible' : 'Hidden'
+    const seen   = privacy.lastSeenVisibility      === 'friends' ? 'Last seen on' : 'Last seen off'
+    return `${online} online · ${seen}`
+  }, [privacy])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  function closeModal() { setModal(null); setDeleteModal(false) }
+  const closeModal = useCallback(() => {
+    setModal(null)
+    setDeleteModal(false)
+  }, [])
 
-  function handleToggleTheme() {
+  const openPasswordModal = useCallback(() => {
+    setPw({ current: '', next: '', confirm: '' })
+    setPwVis({ current: false, next: false, confirm: false })
+    setModal(MODAL.PASSWORD)
+  }, [])
+
+  const handleToggleTheme = useCallback(() => {
     const next = toggleThemeService(darkMode)
     setDarkMode(next)
-  }
+  }, [darkMode])
 
-  async function handlePasswordChange() {
+  const handlePasswordChange = useCallback(async () => {
     if (!pw.current)            return toast.error('Enter your current password')
     if (pw.next.length < 8)     return toast.error('New password must be at least 8 characters')
     if (pw.next !== pw.confirm)  return toast.error('Passwords do not match')
@@ -165,30 +167,29 @@ export default function SettingsPage() {
       setModal(null)
     } catch (err) {
       const code = err?.code || ''
-      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-        toast.error('Current password is incorrect')
-      } else {
-        toast.error(err?.message || 'Failed to change password')
-      }
+      toast.error(
+        code === 'auth/wrong-password' || code === 'auth/invalid-credential'
+          ? 'Current password is incorrect'
+          : err?.message || 'Failed to change password'
+      )
     } finally { setSaving(false) }
-  }
+  }, [pw])
 
-  async function handleSavePrivacy() {
+  const handleSavePrivacy = useCallback(async () => {
     if (!user?.uid) return
     setSaving(true)
     try {
       await savePrivacySettings(user.uid, privacy)
       await refreshUser()
-      // Update Firestore presence immediately so online status change is live
       goOnline(user.uid, privacy.onlineStatusVisibility === 'friends')
       toast.success('Privacy settings saved!')
       setModal(null)
     } catch (err) {
       toast.error(err?.message || 'Failed to save privacy settings')
     } finally { setSaving(false) }
-  }
+  }, [user?.uid, privacy, refreshUser])
 
-  async function handleSaveNotifs() {
+  const handleSaveNotifs = useCallback(async () => {
     if (!user?.uid) return
     setSaving(true)
     try {
@@ -199,59 +200,23 @@ export default function SettingsPage() {
     } catch (err) {
       toast.error(err?.message || 'Failed to save notification settings')
     } finally { setSaving(false) }
-  }
+  }, [user?.uid, notifs, refreshUser])
 
-  async function handleUnblock(theirUid) {
+  const handleUnblock = useCallback(async (theirUid) => {
     if (!user?.uid) return
     try {
       await unblockUser(user.uid, theirUid)
       setBlockedUsers(prev => prev.filter(u => u.uid !== theirUid))
       toast.success('User unblocked')
     } catch { toast.error('Failed to unblock user') }
-  }
+  }, [user?.uid])
 
-  async function handleSendPhoneOTP() {
-    if (!phoneNumber.trim()) return toast.error('Enter your phone number')
-    setPhoneLoading(true)
-    try {
-      await sendPhoneOTP(phoneNumber.trim())
-      setOtpSent(true)
-      setPhoneStatus('Verification code sent. Enter the code below.')
-      toast.success('OTP sent to your phone')
-    } catch (err) {
-      console.error('sendPhoneOTP failed:', err)
-      toast.error(err?.message || 'Failed to send OTP. Please try again.')
-    } finally {
-      setPhoneLoading(false)
-    }
-  }
-
-  async function handleVerifyPhoneOTP() {
-    if (!otpCode.trim()) return toast.error('Enter the verification code')
-    if (!user?.uid) return toast.error('User not found')
-    setVerifyLoading(true)
-    try {
-      await verifyPhoneOTP(otpCode.trim())
-      await updateProfile(user.uid, { phoneVerified: true, phone: phoneNumber.trim() })
-      await refreshUser()
-      setPhoneStatus('Phone number verified successfully')
-      setOtpCode('')
-      setOtpSent(false)
-      toast.success('Phone number verified!')
-    } catch (err) {
-      console.error('verifyPhoneOTP failed:', err)
-      toast.error(err?.message || 'Failed to verify code. Please try again.')
-    } finally {
-      setVerifyLoading(false)
-    }
-  }
-
-  async function handleLogout() {
+  const handleLogout = useCallback(async () => {
     try { await logout(); navigate('/login') }
     catch (err) { toast.error(err?.message || 'Failed to log out') }
-  }
+  }, [navigate])
 
-  async function handleDelete() {
+  const handleDelete = useCallback(async () => {
     setSaving(true)
     try {
       await deleteAccount()
@@ -260,44 +225,48 @@ export default function SettingsPage() {
     } catch (err) {
       toast.error(err?.message || 'Failed to delete account')
     } finally { setSaving(false) }
-  }
+  }, [navigate])
 
   if (!user) return null
 
-  // Avatar
   const avatarColors = getAvatarColor(user.displayName || user.email || '')
   const initials     = getInitials(user.displayName || user.email || '?')
+  const blockedCount = user.blockedUsers?.length ?? 0
 
   return (
     <div style={S.page}>
 
-      {/* ── Header ─────────────────────────────────────────────────── */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={S.header}>
         <motion.button
           onClick={() => navigate(-1)}
-          whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+          whileHover={{ scale: 1.07 }}
+          whileTap={{ scale: 0.92 }}
           style={S.backBtn}
         >
-          <CaretLeft size={18} weight="bold" />
+          <CaretLeft size={17} weight="bold" />
         </motion.button>
         <h2 style={S.headerTitle}>Settings</h2>
       </div>
 
       <div style={S.content}>
 
-        {/* ── Profile summary card ────────────────────────────────────── */}
+        {/* ── Profile card ───────────────────────────────────────────────── */}
         <motion.button
           onClick={() => navigate('/app/profile')}
-          whileHover={{ backgroundColor: 'var(--bg-secondary)', scale: 1.005 }}
-          whileTap={{ scale: 0.99 }}
+          whileHover={{ scale: 1.008 }}
+          whileTap={{ scale: 0.995 }}
           style={S.profileCard}
         >
+          <div style={S.profileCardAccent} />
+
           <div style={{ ...S.profileAvatar, background: avatarColors.bg }}>
             {user.photoURL
-              ? <img src={user.photoURL} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <span style={{ fontSize: 18, fontWeight: 900, color: avatarColors.text }}>{initials}</span>
+              ? <img src={user.photoURL} alt="" style={S.avatarImg} />
+              : <span style={{ fontSize: 19, fontWeight: 900, color: avatarColors.text }}>{initials}</span>
             }
           </div>
+
           <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
             <p style={S.profileName}>{user.displayName || 'Your Profile'}</p>
             <p style={S.profileSub}>
@@ -305,265 +274,190 @@ export default function SettingsPage() {
               {stats ? ` · ${stats.friendsCount} friend${stats.friendsCount !== 1 ? 's' : ''}` : ''}
             </p>
           </div>
-          <CaretRight size={15} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+
+          <div style={S.profileChevron}>
+            <CaretRight size={13} weight="bold" />
+          </div>
         </motion.button>
 
-        <div style={{ marginTop: 18, marginBottom: 24, padding: 20, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg-2)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-            <ShieldCheck size={18} style={{ color: user.phoneVerified ? '#22c55e' : '#f59e0b' }} />
-            <div>
-              <p style={{ margin: 0, fontWeight: 700, color: 'var(--text-1)' }}>Phone verification</p>
-              <p style={{ margin: 0, color: 'var(--text-3)', fontSize: 13 }}>
-                {user.phoneVerified ? 'Your phone is verified.' : 'Verify your phone number for stronger account trust.'}
-              </p>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gap: 12 }}>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={e => setPhoneNumber(e.target.value)}
-              placeholder="+1 234 567 8900"
-              disabled={user.phoneVerified}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-1)', color: 'var(--text-1)' }}
-            />
-            {!user.phoneVerified && (
-              <button
-                onClick={handleSendPhoneOTP}
-                disabled={phoneLoading || !phoneNumber.trim()}
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: phoneLoading || !phoneNumber.trim() ? 'not-allowed' : 'pointer', opacity: phoneLoading || !phoneNumber.trim() ? 0.6 : 1 }}
-              >
-                {phoneLoading ? 'Sending code…' : 'Send verification code'}
-              </button>
-            )}
-
-            {otpSent && !user.phoneVerified && (
-              <>
-                <input
-                  type="text"
-                  value={otpCode}
-                  onChange={e => setOtpCode(e.target.value)}
-                  placeholder="Enter verification code"
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-1)', color: 'var(--text-1)' }}
-                />
-                <button
-                  onClick={handleVerifyPhoneOTP}
-                  disabled={verifyLoading || !otpCode.trim()}
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 700, cursor: verifyLoading || !otpCode.trim() ? 'not-allowed' : 'pointer', opacity: verifyLoading || !otpCode.trim() ? 0.6 : 1 }}
-                >
-                  {verifyLoading ? 'Verifying…' : 'Verify code'}
-                </button>
-              </>
-            )}
-
-            {phoneStatus && (
-              <p style={{ margin: 0, color: user.phoneVerified ? '#22c55e' : 'var(--text-3)', fontSize: 13 }}>
-                {phoneStatus}
-              </p>
-            )}
-          </div>
+        {/* ── Quick stats ────────────────────────────────────────────────── */}
+        <div style={S.statsRow}>
+          <StatPill color="#22c55e" icon={<Users size={12} weight="fill" />} label={stats ? `${stats.friendsCount} friends` : '—'} />
+          <StatPill color="#3b82f6" icon={<ShieldCheck size={12} weight="fill" />} label={blockedCount === 0 ? 'No blocks' : `${blockedCount} blocked`} />
+          <StatPill
+            color={darkMode ? '#f59e0b' : '#8b5cf6'}
+            icon={darkMode ? <Moon size={12} weight="fill" /> : <Sun size={12} weight="fill" />}
+            label={darkMode ? 'Dark' : 'Light'}
+          />
         </div>
 
-        {/* ── PREFERENCES ─────────────────────────────────────────────── */}
+        {/* ── PREFERENCES ────────────────────────────────────────────────── */}
         <SectionLabel label="Preferences" />
         <div style={S.card}>
-          <Row
+          <SettingRow
             Icon={darkMode ? Moon : Sun}
-            iconBg="rgba(245,158,11,0.13)"
-            iconColor="#f59e0b"
+            iconBg="rgba(245,158,11,0.14)" iconColor="#f59e0b"
             label="Dark mode"
-            value={darkMode ? 'On' : 'Off'}
+            value={darkMode ? 'Dark theme active' : 'Light theme active'}
             onClick={handleToggleTheme}
             action={<Toggle on={darkMode} />}
           />
-          <Row
+          <SettingRow
             Icon={BellSimple}
-            iconBg="rgba(59,130,246,0.13)"
-            iconColor="#3b82f6"
+            iconBg="rgba(59,130,246,0.14)" iconColor="#3b82f6"
             label="Notifications"
             value={notifsValue}
-            onClick={() => setModal(M.NOTIFICATIONS)}
-            action={<CaretRight size={15} />}
+            onClick={() => setModal(MODAL.NOTIFICATIONS)}
+            action={<Chevron />}
           />
-          <Row
+          <SettingRow
             Icon={ShieldCheck}
-            iconBg="rgba(139,92,246,0.13)"
-            iconColor="#8b5cf6"
+            iconBg="rgba(139,92,246,0.14)" iconColor="#8b5cf6"
             label="Privacy"
             value={privacyValue}
-            onClick={() => setModal(M.PRIVACY)}
-            action={<CaretRight size={15} />}
+            onClick={() => setModal(MODAL.PRIVACY)}
+            action={<Chevron />}
             last
           />
         </div>
 
-        {/* ── SECURITY ────────────────────────────────────────────────── */}
+        {/* ── SECURITY ───────────────────────────────────────────────────── */}
         <SectionLabel label="Security" />
         <div style={S.card}>
-          <Row
+          <SettingRow
             Icon={Lock}
-            iconBg="rgba(34,197,94,0.13)"
-            iconColor="#22c55e"
+            iconBg="rgba(34,197,94,0.14)" iconColor="#22c55e"
             label="Change password"
-            value="Keep your account secure"
-            onClick={() => {
-              setPw({ current: '', next: '', confirm: '' })
-              setPwVis({ current: false, next: false, confirm: false })
-              setModal(M.PASSWORD)
-            }}
-            action={<CaretRight size={15} />}
+            value="Update your account password"
+            onClick={openPasswordModal}
+            action={<Chevron />}
             last
           />
         </div>
 
-        {/* ── ACCOUNT ─────────────────────────────────────────────────── */}
+        {/* ── ACCOUNT ────────────────────────────────────────────────────── */}
         <SectionLabel label="Account" />
         <div style={S.card}>
-          <Row
+          <SettingRow
             Icon={Prohibit}
-            iconBg="rgba(156,163,175,0.12)"
-            iconColor="var(--text-secondary)"
+            iconBg="rgba(107,114,128,0.12)" iconColor="var(--text-secondary)"
             label="Blocked users"
-            value={blockedUsers.length > 0 ? `${blockedUsers.length} blocked` : 'No blocked users'}
-            onClick={() => setModal(M.BLOCKED)}
-            action={<CaretRight size={15} />}
+            value={blockedCount > 0 ? `${blockedCount} blocked user${blockedCount !== 1 ? 's' : ''}` : 'No blocked users'}
+            onClick={() => setModal(MODAL.BLOCKED)}
+            action={<Chevron />}
           />
-          <Row
+          <SettingRow
             Icon={SignOut}
-            iconBg="rgba(156,163,175,0.12)"
-            iconColor="var(--text-secondary)"
+            iconBg="rgba(107,114,128,0.12)" iconColor="var(--text-secondary)"
             label="Sign out"
-            value="See you soon"
+            value="Come back soon"
             onClick={handleLogout}
           />
-          <Row
+          <SettingRow
             Icon={Trash}
-            iconBg="rgba(229,57,53,0.1)"
-            iconColor="var(--danger)"
+            iconBg="rgba(239,68,68,0.12)" iconColor="#ef4444"
             label="Delete account"
-            labelColor="var(--danger)"
-            value="Permanently remove all your data"
+            labelColor="#ef4444"
+            value="Remove all data permanently"
             onClick={() => setDeleteModal(true)}
             last
           />
         </div>
 
         <p style={S.versionTag}>LikeChat · v1.0</p>
-        <div id="recaptcha-container" style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
       </div>
 
-      {/* ── MODALS ───────────────────────────────────────────────────── */}
+      {/* ── MODALS ───────────────────────────────────────────────────────── */}
       <AnimatePresence>
 
-        {/* Password modal */}
-        {modal === M.PASSWORD && (
+        {/* ── Password ──────────────────────────────────────────────────── */}
+        {modal === MODAL.PASSWORD && (
           <Sheet title="Change Password" onClose={closeModal} accentColor="#22c55e">
-
             <ModalHero
-              icon={<Lock size={22} weight="fill" />}
-              iconBg="rgba(34,197,94,0.13)"
-              iconColor="#22c55e"
+              icon={<Lock size={20} weight="fill" />}
+              iconBg="rgba(34,197,94,0.15)" iconColor="#22c55e"
               text="Use at least 8 characters with an uppercase letter, a number, and a symbol."
             />
 
             <div style={S.stack}>
-              <PwField label="Current password"  field="current" pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} autoFocus />
-              <PwField label="New password"      field="next"    pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} />
-              <PwField label="Confirm password"  field="confirm" pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} />
+              <PwField label="Current password" field="current" pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} autoFocus />
+              <PwField label="New password"     field="next"    pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} />
+              <PwField label="Confirm password" field="confirm" pw={pw} setPw={setPw} pwVis={pwVis} setPwVis={setPwVis} />
             </div>
 
-            {pw.next ? <PwStrength password={pw.next} /> : null}
+            {pw.next && <PwStrength password={pw.next} />}
 
-            {pw.confirm ? (
-              <div style={{ ...S.matchRow, color: pw.next === pw.confirm ? 'var(--success)' : 'var(--danger)' }}>
+            {pw.confirm && (
+              <div style={{ ...S.matchRow, color: pw.next === pw.confirm ? '#22c55e' : '#ef4444' }}>
                 {pw.next === pw.confirm
                   ? <><CheckCircle size={13} weight="fill" /><span>Passwords match</span></>
                   : <><XCircle    size={13} weight="fill" /><span>Passwords do not match</span></>
                 }
               </div>
-            ) : null}
+            )}
 
             <SaveBtn label="Change password" onClick={handlePasswordChange} saving={saving} accentColor="#22c55e" />
           </Sheet>
         )}
 
-        {/* Privacy modal */}
-        {modal === M.PRIVACY && (
+        {/* ── Privacy ───────────────────────────────────────────────────── */}
+        {modal === MODAL.PRIVACY && (
           <Sheet title="Privacy" onClose={closeModal} scroll accentColor="#8b5cf6">
-
             <ModalHero
-              icon={<ShieldCheck size={22} weight="fill" />}
-              iconBg="rgba(139,92,246,0.13)"
-              iconColor="#8b5cf6"
+              icon={<ShieldCheck size={20} weight="fill" />}
+              iconBg="rgba(139,92,246,0.15)" iconColor="#8b5cf6"
               text="Control who can see your profile and how your activity appears to others."
             />
 
-            <FieldLabel>Who can see your profile</FieldLabel>
-            <div style={S.chips}>
-              {[
-                { v: 'friends', Icon: Users,      label: 'Friends only', desc: 'Only your friends can view your profile' },
-                { v: 'nobody',  Icon: UserCircle, label: 'Nobody',       desc: 'Your profile is completely private'      },
-              ].map(({ v, Icon, label, desc }) => (
-                <VisChip
-                  key={v}
-                  v={v}
-                  active={privacy.profileVisible}
-                  Icon={Icon}
-                  label={label}
-                  desc={desc}
-                  onSelect={val => setPrivacy(prev => ({ ...prev, profileVisible: val }))}
-                />
-              ))}
+            <div style={S.resetBar}>
+              <p style={S.resetText}>Customize visibility across your account.</p>
+              <button type="button" onClick={() => setPrivacy(DEFAULT_PRIVACY)} style={S.resetBtn}>Reset</button>
             </div>
 
-            <FieldLabel>Activity &amp; Visibility</FieldLabel>
-            <div style={S.prefsGrid}>
+            <div style={S.privacyList}>
               <PreferenceDropdown
-                icon={<Eye size={15} />}
-                iconColor="#3b82f6"
+                id="privacy-lastseen"
+                icon={<Eye size={15} />} iconColor="#3b82f6"
                 label="Last seen"
                 value={privacy.lastSeenVisibility}
                 options={[
-                  { value: 'friends', label: 'Friends only', icon: Users },
-                  { value: 'nobody', label: 'Nobody', icon: EyeSlash },
+                  { value: 'friends', label: 'Friends only', icon: Users,    desc: 'Friends can see when you were last online' },
+                  { value: 'nobody',  label: 'No one',       icon: EyeSlash, desc: 'Last seen is hidden from everyone' },
                 ]}
-                onChange={v => setPrivacy(prev => ({ ...prev, lastSeenVisibility: v }))}
+                onChange={val => setPrivacy(prev => ({ ...prev, lastSeenVisibility: val }))}
               />
               <PreferenceDropdown
-                icon={<WifiHigh size={15} />}
-                iconColor="#22c55e"
+                id="privacy-online"
+                icon={<WifiHigh size={15} />} iconColor="#22c55e"
                 label="Online status"
                 value={privacy.onlineStatusVisibility}
                 options={[
-                  { value: 'friends', label: 'Friends only', icon: Users },
-                  { value: 'nobody', label: 'Nobody', icon: EyeSlash },
+                  { value: 'friends', label: 'Friends only', icon: Users,    desc: 'Friends see when you are active' },
+                  { value: 'nobody',  label: 'No one',       icon: EyeSlash, desc: 'Your online status is hidden' },
                 ]}
-                onChange={v => setPrivacy(prev => ({ ...prev, onlineStatusVisibility: v }))}
+                onChange={val => setPrivacy(prev => ({ ...prev, onlineStatusVisibility: val }))}
               />
               <PreferenceDropdown
-                icon={<UserPlus size={15} />}
-                iconColor="#8b5cf6"
+                id="privacy-requests"
+                icon={<UserPlus size={15} />} iconColor="#8b5cf6"
                 label="Friend requests"
-                value={privacy.allowFriendReqs}
+                value={privacy.allowFriendReqsVisibility}
                 options={[
-                  { value: 'all', label: 'Everyone', icon: Users },
-                  { value: 'friends', label: 'Friends only', icon: Check },
-                  { value: 'nobody', label: 'Nobody', icon: XCircle },
+                  { value: 'friends', label: 'Friends only', icon: Users,   desc: 'Only friends can send requests' },
+                  { value: 'nobody',  label: 'Disabled',     icon: XCircle, desc: 'No one can send friend requests' },
                 ]}
-                onChange={v => setPrivacy(prev => ({ ...prev, allowFriendReqs: v }))}
+                onChange={val => setPrivacy(prev => ({ ...prev, allowFriendReqsVisibility: val }))}
               />
               <PreferenceDropdown
-                icon={<CheckCircle size={15} />}
-                iconColor="#f59e0b"
+                id="privacy-readreceipts"
+                icon={<CheckCircle size={15} />} iconColor="#f59e0b"
                 label="Read receipts"
-                value={privacy.readReceipts}
+                value={privacy.readReceiptsVisibility}
                 options={[
-                  { value: 'all', label: 'Everyone', icon: Users },
-                  { value: 'friends', label: 'Friends only', icon: Check },
-                  { value: 'nobody', label: 'Nobody', icon: XCircle },
+                  { value: 'friends', label: 'Friends only', icon: Users,   desc: 'Friends see when you read messages' },
+                  { value: 'nobody',  label: 'Off',          icon: XCircle, desc: 'Read receipts are disabled' },
                 ]}
-                onChange={v => setPrivacy(prev => ({ ...prev, readReceipts: v }))}
+                onChange={val => setPrivacy(prev => ({ ...prev, readReceiptsVisibility: val }))}
               />
             </div>
 
@@ -571,97 +465,92 @@ export default function SettingsPage() {
           </Sheet>
         )}
 
-        {/* Notifications modal */}
-        {modal === M.NOTIFICATIONS && (
+        {/* ── Notifications ─────────────────────────────────────────────── */}
+        {modal === MODAL.NOTIFICATIONS && (
           <Sheet title="Notifications" onClose={closeModal} scroll accentColor="#3b82f6">
-
             <ModalHero
-              icon={<BellSimple size={22} weight="fill" />}
-              iconBg="rgba(59,130,246,0.13)"
-              iconColor="#3b82f6"
-              text="Choose which alerts you receive. You can always turn these on or off later."
+              icon={<BellSimple size={20} weight="fill" />}
+              iconBg="rgba(59,130,246,0.15)" iconColor="#3b82f6"
+              text="Choose which alerts you receive. Changes are saved to your account."
             />
+
+            <div style={S.resetBar}>
+              <p style={S.resetText}>Saved to your account and applied instantly.</p>
+              <button type="button" onClick={() => setNotifs(DEFAULT_NOTIFICATIONS)} style={S.resetBtn}>Reset</button>
+            </div>
 
             <div style={S.toggleList}>
               <ToggleRow
-                icon={<ChatCircle size={15} />}  iconColor="#3b82f6"
-                label="Messages"
-                sub="Notifications for new messages in your chats"
+                icon={<ChatCircle size={15} />} iconColor="#3b82f6"
+                label="Messages" sub="Alerts for new messages"
                 value={notifs.messages}
                 onChange={v => setNotifs(prev => ({ ...prev, messages: v }))}
               />
               <ToggleRow
-                icon={<At size={15} />}           iconColor="#f59e0b"
-                label="Mentions"
-                sub="When someone @mentions you in a group"
+                icon={<At size={15} />} iconColor="#f59e0b"
+                label="Mentions" sub="When someone @mentions you"
                 value={notifs.mentions}
                 onChange={v => setNotifs(prev => ({ ...prev, mentions: v }))}
               />
               <ToggleRow
-                icon={<UserPlus size={15} />}     iconColor="#8b5cf6"
-                label="Friend requests"
-                sub="New friend and connection requests"
+                icon={<UserPlus size={15} />} iconColor="#8b5cf6"
+                label="Friend requests" sub="New connection requests"
                 value={notifs.friendReqs}
                 onChange={v => setNotifs(prev => ({ ...prev, friendReqs: v }))}
               />
               <ToggleRow
-                icon={<Megaphone size={15} />}    iconColor="#22c55e"
-                label="App updates"
-                sub="Announcements and new feature alerts"
+                icon={<Megaphone size={15} />} iconColor="#22c55e"
+                label="App updates" sub="Announcements and new features"
                 value={notifs.appUpdates}
                 onChange={v => setNotifs(prev => ({ ...prev, appUpdates: v }))}
               />
               <ToggleRow
-                icon={<SpeakerHigh size={15} />}  iconColor="var(--primary)"
-                label="Sounds"
-                sub="Play sounds for incoming notifications"
+                icon={<SpeakerHigh size={15} />} iconColor="var(--primary)"
+                label="Sounds" sub="Play notification sounds"
                 value={notifs.sound}
                 onChange={v => setNotifs(prev => ({ ...prev, sound: v }))}
                 last
               />
             </div>
 
-            <SaveBtn label="Save notification settings" onClick={handleSaveNotifs} saving={saving} accentColor="#3b82f6" />
+            <SaveBtn label="Save preferences" onClick={handleSaveNotifs} saving={saving} accentColor="#3b82f6" />
           </Sheet>
         )}
 
-        {/* Blocked users modal */}
-        {modal === M.BLOCKED && (
+        {/* ── Blocked users ─────────────────────────────────────────────── */}
+        {modal === MODAL.BLOCKED && (
           <Sheet title="Blocked Users" onClose={closeModal} scroll accentColor="var(--text-tertiary)">
             {loadingBlocked ? (
-              <div style={S.emptyCenter}>
-                <Spinner size={22} />
-              </div>
+              <div style={S.emptyCenter}><Spinner size={22} /></div>
             ) : blockedUsers.length === 0 ? (
               <div style={S.emptyCenter}>
-                <Prohibit size={36} style={{ color: 'var(--text-tertiary)', marginBottom: 10 }} />
+                <div style={{ width: 58, height: 58, borderRadius: 18, background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                  <Prohibit size={26} style={{ color: 'var(--text-tertiary)' }} />
+                </div>
                 <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>No blocked users</p>
-                <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-tertiary)' }}>Users you block will appear here</p>
+                <p style={{ margin: '5px 0 0', fontSize: 12, color: 'var(--text-tertiary)' }}>Users you block will appear here</p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {blockedUsers.map(bu => {
-                  const c  = getAvatarColor(bu.displayName || '')
-                  const in_ = getInitials(bu.displayName || bu.email || '?')
+                  const c    = getAvatarColor(bu.displayName || '')
+                  const init = getInitials(bu.displayName || bu.email || '?')
                   return (
                     <div key={bu.uid} style={S.blockedRow}>
-                      <div style={{ width: 40, height: 40, borderRadius: 13, overflow: 'hidden', flexShrink: 0, background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: 42, height: 42, borderRadius: 13, overflow: 'hidden', flexShrink: 0, background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {bu.photoURL
                           ? <img src={bu.photoURL} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          : <span style={{ fontSize: 14, fontWeight: 900, color: c.text }}>{in_}</span>
+                          : <span style={{ fontSize: 14, fontWeight: 900, color: c.text }}>{init}</span>
                         }
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {bu.displayName || bu.email}
-                        </p>
-                        {bu.username && (
-                          <p style={{ margin: '1px 0 0', fontSize: 12, color: 'var(--text-tertiary)' }}>@{bu.username}</p>
-                        )}
+                        <p style={S.blockedName}>{bu.displayName || bu.email}</p>
+                        {bu.username && <p style={S.blockedHandle}>@{bu.username}</p>}
                       </div>
                       <motion.button
                         onClick={() => handleUnblock(bu.uid)}
-                        whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                        whileHover={{ scale: 1.04 }}
+                        whileTap={{ scale: 0.96 }}
                         style={S.unblockBtn}
                       >
                         Unblock
@@ -674,7 +563,7 @@ export default function SettingsPage() {
           </Sheet>
         )}
 
-        {/* Delete confirmation */}
+        {/* ── Delete confirmation ───────────────────────────────────────── */}
         {deleteModal && (
           <motion.div
             style={S.overlay}
@@ -683,26 +572,37 @@ export default function SettingsPage() {
           >
             <motion.div
               style={S.deleteSheet}
-              initial={{ y: 40, opacity: 0, scale: 0.97 }}
+              initial={{ y: 50, opacity: 0, scale: 0.95 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: 30, opacity: 0, scale: 0.97 }}
-              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              exit={{ y: 30, opacity: 0, scale: 0.95 }}
+              transition={SPRING_SHEET}
               onClick={e => e.stopPropagation()}
             >
               <div style={S.warningWrap}>
-                <div style={S.warningIcon}>
-                  <Warning size={30} weight="fill" />
-                </div>
+                <motion.div
+                  style={S.warningIcon}
+                  animate={{ scale: [1, 1.06, 1] }}
+                  transition={{ repeat: Infinity, duration: 2.5, ease: 'easeInOut' }}
+                >
+                  <Warning size={28} weight="fill" />
+                </motion.div>
                 <h3 style={S.deleteTitle}>Delete account?</h3>
                 <p style={S.deleteText}>
-                  This permanently deletes your account, all messages, friends, and data. It cannot be undone.
+                  This permanently deletes your account, all messages, friends, and data. This cannot be undone.
                 </p>
               </div>
               <div style={S.twoButtons}>
                 <motion.button onClick={closeModal} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} style={S.secondaryBtn}>
                   Cancel
                 </motion.button>
-                <motion.button onClick={handleDelete} disabled={saving} whileHover={!saving ? { scale: 1.02 } : {}} whileTap={!saving ? { scale: 0.97 } : {}} style={S.dangerBtn}>
+                <motion.button
+                  onClick={handleDelete}
+                  disabled={saving}
+                  whileHover={!saving ? { scale: 1.02 } : {}}
+                  whileTap={!saving ? { scale: 0.97 } : {}}
+                  style={S.dangerBtn}
+                >
+                  {saving && <Spinner size={14} />}
                   {saving ? 'Deleting…' : 'Delete forever'}
                 </motion.button>
               </div>
@@ -725,21 +625,17 @@ function Sheet({ title, onClose, children, scroll = false, accentColor = 'var(--
       onClick={onClose}
     >
       <motion.div
-        style={{
-          ...S.sheet,
-          borderTop: `3px solid ${accentColor}`,
-          ...(scroll ? { maxHeight: '88vh', overflowY: 'auto' } : {}),
-        }}
-        initial={{ y: 44, opacity: 0, scale: 0.97 }}
+        style={{ ...S.sheet, borderTop: `3px solid ${accentColor}`, ...(scroll ? { maxHeight: '88vh', overflowY: 'auto' } : {}) }}
+        initial={{ y: 50, opacity: 0, scale: 0.96 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
-        exit={{ y: 32, opacity: 0, scale: 0.97 }}
-        transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+        exit={{ y: 30, opacity: 0, scale: 0.96 }}
+        transition={SPRING_SHEET}
         onClick={e => e.stopPropagation()}
       >
         <div style={S.sheetHeader}>
           <span style={S.sheetTitle}>{title}</span>
-          <motion.button style={S.sheetClose} onClick={onClose} whileHover={{ rotate: 90, scale: 1.08 }} whileTap={{ scale: 0.9 }}>
-            <X size={14} />
+          <motion.button style={S.sheetClose} onClick={onClose} whileHover={{ rotate: 90, scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+            <X size={13} weight="bold" />
           </motion.button>
         </div>
         {children}
@@ -751,47 +647,61 @@ function Sheet({ title, onClose, children, scroll = false, accentColor = 'var(--
 function ModalHero({ icon, iconBg, iconColor, text }) {
   return (
     <div style={S.modalHero}>
-      <div style={{ ...S.modalHeroIcon, background: iconBg, color: iconColor }}>
-        {icon}
-      </div>
+      <div style={{ ...S.modalHeroIcon, background: iconBg, color: iconColor }}>{icon}</div>
       <p style={S.modalHeroText}>{text}</p>
     </div>
   )
 }
 
-function Row({ Icon, label, value, labelColor, iconBg, iconColor, onClick, action, last }) {
-  const Comp = onClick ? motion.button : 'div'
+function StatPill({ color, icon, label }) {
   return (
-    <Comp
+    <div style={{ ...S.statPill, borderColor: `${color}30` }}>
+      <div style={{ ...S.statDot, background: color, boxShadow: `0 0 6px ${color}66` }} />
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{label}</span>
+    </div>
+  )
+}
+
+function SectionLabel({ label }) {
+  return <p style={S.sectionLabel}>{label}</p>
+}
+
+function Chevron() {
+  return <CaretRight size={14} style={{ color: 'var(--text-tertiary)' }} />
+}
+
+function SettingRow({ Icon, label, value, labelColor, iconBg, iconColor, onClick, action, last }) {
+  return (
+    <motion.button
       onClick={onClick}
-      whileHover={onClick ? { backgroundColor: 'var(--bg-secondary)' } : {}}
-      whileTap={onClick ? { scale: 0.99 } : {}}
-      style={{
-        width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-        padding: '13px 14px', border: 'none', textAlign: 'left', background: 'transparent',
-        cursor: onClick ? 'pointer' : 'default',
-        borderBottom: last ? 'none' : '1px solid var(--border)',
-      }}
+      whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
+      whileTap={{ scale: 0.99 }}
+      style={{ ...S.settingRow, borderBottom: last ? 'none' : '1px solid var(--border)' }}
     >
-      <div style={{ ...S.rowIcon, background: iconBg || 'var(--primary-light)', color: iconColor || 'var(--primary)' }}>
-        <Icon size={17} />
+      <div style={{ ...S.rowIcon, background: iconBg, color: iconColor }}>
+        <Icon size={16} weight="fill" />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
         <p style={{ ...S.rowLabel, color: labelColor || 'var(--text-primary)' }}>{label}</p>
-        {value ? <p style={S.rowValue}>{value}</p> : null}
+        {value && <p style={S.rowValue}>{value}</p>}
       </div>
-      {action ? <div style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>{action}</div> : null}
-    </Comp>
+      {action && <div style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>{action}</div>}
+    </motion.button>
   )
 }
 
 function Toggle({ on }) {
   return (
-    <div style={{ width: 40, height: 22, borderRadius: 999, flexShrink: 0, position: 'relative', border: '1px solid var(--border)', background: on ? 'var(--primary)' : 'var(--bg-tertiary,#3a3a3a)' }}>
+    <div style={{
+      width: 42, height: 24, borderRadius: 999, flexShrink: 0, position: 'relative',
+      background: on ? 'var(--primary)' : 'var(--bg-tertiary, #3a3a3a)',
+      boxShadow: on ? '0 2px 10px rgba(30,144,255,0.38)' : 'none',
+      transition: 'background 0.2s, box-shadow 0.2s',
+    }}>
       <motion.div
-        animate={{ x: on ? 19 : 1 }}
-        transition={{ type: 'spring', stiffness: 500, damping: 28 }}
-        style={{ position: 'absolute', top: 1, width: 18, height: 18, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.25)' }}
+        animate={{ x: on ? 20 : 2 }}
+        transition={SPRING_TOGGLE}
+        style={{ position: 'absolute', top: 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 5px rgba(0,0,0,0.28)' }}
       />
     </div>
   )
@@ -805,9 +715,9 @@ function ToggleRow({ icon, iconColor, label, sub, value, onChange, last }) {
       borderBottom: last ? 'none' : '1px solid var(--border)',
     }}>
       <div style={{
-        width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+        width: 34, height: 34, borderRadius: 10, flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: iconColor ? `${iconColor}1a` : 'var(--bg-secondary)',
+        background: iconColor ? `${iconColor}18` : 'var(--bg-secondary)',
         color: iconColor || 'var(--text-secondary)',
       }}>
         {icon}
@@ -820,45 +730,20 @@ function ToggleRow({ icon, iconColor, label, sub, value, onChange, last }) {
         onClick={() => onChange(!value)}
         whileTap={{ scale: 0.88 }}
         style={{
-          width: 40, height: 22, borderRadius: 999, border: '1px solid var(--border)',
+          width: 42, height: 24, borderRadius: 999, border: 'none',
           cursor: 'pointer', flexShrink: 0, padding: 0, position: 'relative',
-          background: value ? 'var(--primary)' : 'var(--bg-tertiary,#3a3a3a)',
+          background: value ? 'var(--primary)' : 'var(--bg-tertiary, #3a3a3a)',
+          boxShadow: value ? '0 2px 10px rgba(30,144,255,0.38)' : 'none',
+          transition: 'background 0.2s, box-shadow 0.2s',
         }}
       >
         <motion.div
-          animate={{ x: value ? 19 : 1 }}
-          transition={{ type: 'spring', stiffness: 500, damping: 28 }}
-          style={{ position: 'absolute', top: 1, width: 18, height: 18, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.25)' }}
+          animate={{ x: value ? 20 : 2 }}
+          transition={SPRING_TOGGLE}
+          style={{ position: 'absolute', top: 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 5px rgba(0,0,0,0.28)' }}
         />
       </motion.button>
     </div>
-  )
-}
-
-function VisChip({ v, active, Icon, label, desc, onSelect }) {
-  const on = active === v
-  return (
-    <motion.button
-      whileTap={{ scale: 0.95 }}
-      onClick={() => onSelect(v)}
-      style={{
-        flex: 1, padding: '14px 10px', borderRadius: 14,
-        border: `2px solid ${on ? 'var(--primary)' : 'var(--border)'}`,
-        background: on ? 'var(--primary-light)' : 'var(--bg-secondary)',
-        color: on ? 'var(--primary)' : 'var(--text-secondary)',
-        cursor: 'pointer', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', gap: 7, minHeight: 92,
-      }}
-    >
-      <div style={{
-        width: 36, height: 36, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: on ? 'rgba(30,144,255,0.15)' : 'var(--bg-primary)',
-      }}>
-        <Icon size={18} />
-      </div>
-      <span style={{ fontSize: 12, fontWeight: 800 }}>{label}</span>
-      <span style={{ fontSize: 10, fontWeight: 500, color: on ? 'var(--primary)' : 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.35 }}>{desc}</span>
-    </motion.button>
   )
 }
 
@@ -873,7 +758,7 @@ function PwField({ label, field, pw, setPw, pwVis, setPwVis, autoFocus }) {
           onChange={e => setPw(prev => ({ ...prev, [field]: e.target.value }))}
           placeholder="••••••••"
           autoFocus={autoFocus}
-          style={{ ...S.input, paddingRight: 42 }}
+          style={{ ...S.input, paddingRight: 44 }}
         />
         <button type="button" onClick={() => setPwVis(prev => ({ ...prev, [field]: !prev[field] }))} style={S.eyeBtn}>
           {pwVis[field] ? <EyeSlash size={16} /> : <Eye size={16} />}
@@ -891,27 +776,16 @@ function PwStrength({ password }) {
   return (
     <div style={{ marginTop: 10 }}>
       <div style={S.strengthBars}>
-        {[1,2,3,4].map(i => (
+        {[1, 2, 3, 4].map(i => (
           <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, transition: 'background 0.3s', background: i <= score ? colors[score] : 'var(--border)' }} />
         ))}
       </div>
-      <p style={{ margin: '4px 0 0', fontSize: 11, color: colors[score] || 'var(--text-tertiary)' }}>
-        {score > 0 ? labels[score] : ''}
-      </p>
+      {score > 0 && <p style={{ margin: '4px 0 0', fontSize: 11, fontWeight: 600, color: colors[score] }}>{labels[score]}</p>}
     </div>
   )
 }
 
-function SectionLabel({ label }) {
-  return <p style={S.sectionLabel}>{label}</p>
-}
-
-function FieldLabel({ children }) {
-  return <p style={S.fieldLabel}>{children}</p>
-}
-
 function SaveBtn({ onClick, saving, label = 'Save', accentColor }) {
-  const bg = accentColor || 'var(--primary)'
   return (
     <motion.button
       onClick={onClick}
@@ -920,93 +794,141 @@ function SaveBtn({ onClick, saving, label = 'Save', accentColor }) {
       whileTap={!saving ? { scale: 0.97 } : {}}
       style={{
         ...S.saveBtn,
-        background: bg,
-        boxShadow: `0 4px 18px ${accentColor || 'rgba(30,144,255,0.3)'}44`,
+        background: accentColor || 'var(--primary)',
+        boxShadow: `0 6px 20px ${accentColor || 'rgba(30,144,255,0.3)'}44`,
+        opacity: saving ? 0.8 : 1,
       }}
     >
       {saving ? <Spinner size={14} /> : <Check size={16} weight="bold" />}
-      <span>{saving ? 'Saving...' : label}</span>
+      <span>{saving ? 'Saving…' : label}</span>
     </motion.button>
   )
 }
 
-function PreferenceDropdown({ icon, iconColor, label, value, options, onChange }) {
-  const [open, setOpen] = useState(false)
-  const selectedOption = options.find(o => o.value === value)
-  const OptionIcon = selectedOption?.icon
-  
+function PreferenceDropdown({ id, icon, iconColor, label, value, options, onChange }) {
+  const [open,       setOpen]   = useState(false)
+  const [popupStyle, setPopup]  = useState(null)
+  const rootRef                 = useRef(null)
+  const selectedOption          = options.find(o => o.value === value)
+
+  const recalcPopup = useCallback(() => {
+    if (!rootRef.current) return
+    try {
+      const r = rootRef.current.getBoundingClientRect()
+      setPopup({ left: Math.max(8, r.left), top: r.bottom + window.scrollY + 6, width: Math.max(200, r.width) })
+    } catch { setPopup(null) }
+  }, [])
+
+  // Close when another dropdown opens or user clicks outside
+  useEffect(() => {
+    const onOther = e => { try { if (e?.detail !== id) setOpen(false) } catch { setOpen(false) } }
+    const onDoc   = e => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false) }
+    window.addEventListener('lc:dropdown-open', onOther)
+    document.addEventListener('mousedown', onDoc)
+    return () => {
+      window.removeEventListener('lc:dropdown-open', onOther)
+      document.removeEventListener('mousedown', onDoc)
+    }
+  }, [id])
+
+  // Reposition on scroll or resize while open
+  useEffect(() => {
+    if (!open) return
+    recalcPopup()
+    window.addEventListener('resize', recalcPopup)
+    window.addEventListener('scroll', recalcPopup, true)
+    return () => {
+      window.removeEventListener('resize', recalcPopup)
+      window.removeEventListener('scroll', recalcPopup, true)
+    }
+  }, [open, recalcPopup])
+
+  const toggle = useCallback((next) => {
+    const n = typeof next === 'boolean' ? next : !open
+    if (n) {
+      window.dispatchEvent(new CustomEvent('lc:dropdown-open', { detail: id }))
+      recalcPopup()
+    }
+    setOpen(n)
+  }, [open, id, recalcPopup])
+
   return (
     <motion.button
-      onClick={() => setOpen(!open)}
+      ref={rootRef}
+      role="button"
+      aria-expanded={open}
+      tabIndex={0}
+      onClick={() => toggle()}
       whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
       whileTap={{ scale: 0.98 }}
-      style={{
-        width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-        padding: '13px 14px', border: '1px solid var(--border)', borderRadius: 12,
-        background: 'var(--bg-2)', cursor: 'pointer', position: 'relative', marginBottom: 10,
-        flexDirection: 'row', justifyContent: 'space-between',
-      }}
+      style={S.prefDropdown}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: iconColor ? `${iconColor}1a` : 'var(--bg-secondary)',
-          color: iconColor || 'var(--text-secondary)',
-        }}>
-          {icon}
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+        <div style={{ ...S.prefDropdownIcon, background: `${iconColor}18`, color: iconColor }}>{icon}</div>
         <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{label}</p>
-          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-3)' }}>{selectedOption?.label}</p>
+          <p style={S.prefLabel}>{label}</p>
+          <p style={S.prefValue}>
+            {selectedOption?.label}{selectedOption?.desc ? ` — ${selectedOption.desc}` : ''}
+          </p>
         </div>
       </div>
-      <CaretRight size={14} style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
-      
+      <CaretRight size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+            initial={{ opacity: 0, y: -6, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.95 }}
-            transition={{ duration: 0.15 }}
+            exit={{ opacity: 0, y: -6, scale: 0.96 }}
+            transition={{ duration: 0.14 }}
             onClick={e => e.stopPropagation()}
             style={{
-              position: 'absolute', top: '100%', left: 0, right: 0,
-              marginTop: 4, borderRadius: 12, border: '1px solid var(--border)',
-              background: 'var(--bg-2)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-              zIndex: 50, overflow: 'hidden',
+              position: 'fixed',
+              left:  popupStyle?.left  ?? 0,
+              top:   popupStyle?.top   ?? 0,
+              width: popupStyle?.width ?? '100%',
+              borderRadius: 14, border: '1px solid var(--border)',
+              background: 'var(--bg-primary)',
+              boxShadow: '0 16px 52px rgba(0,0,0,0.32)',
+              zIndex: 3000, overflow: 'hidden',
             }}
           >
-            {options.map((opt) => {
-              const OptIconComponent = opt.icon
-              const isSelected = opt.value === value
+            {options.map((opt, idx) => {
+              const OptIcon  = opt.icon
+              const selected = opt.value === value
               return (
                 <motion.button
                   key={opt.value}
-                  onClick={() => {
-                    onChange(opt.value)
-                    setOpen(false)
-                  }}
-                  whileHover={{ backgroundColor: 'var(--bg-3)' }}
+                  onClick={() => { onChange(opt.value); toggle(false) }}
+                  whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
                   whileTap={{ scale: 0.98 }}
                   style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '12px 14px', border: 'none', background: isSelected ? 'rgba(30,144,255,0.08)' : 'transparent',
-                    color: isSelected ? 'var(--primary)' : 'var(--text-1)', cursor: 'pointer',
-                    fontWeight: isSelected ? 700 : 500, fontSize: 13, borderBottom: '1px solid var(--border)', textAlign: 'left',
+                    ...S.dropdownOpt,
+                    background: selected ? 'rgba(30,144,255,0.06)' : 'transparent',
+                    color: selected ? 'var(--primary)' : 'var(--text-primary)',
+                    borderBottom: idx < options.length - 1 ? '1px solid var(--border)' : 'none',
                   }}
                 >
                   <div style={{
-                    width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isSelected ? 'rgba(30,144,255,0.15)' : 'var(--bg-3)',
-                    color: isSelected ? 'var(--primary)' : 'var(--text-3)',
+                    background: selected ? 'rgba(30,144,255,0.14)' : 'var(--bg-secondary)',
+                    color: selected ? 'var(--primary)' : 'var(--text-secondary)',
                   }}>
-                    <OptIconComponent size={14} />
+                    <OptIcon size={16} />
                   </div>
-                  <span>{opt.label}</span>
-                  {isSelected && <Check size={14} weight="bold" style={{ marginLeft: 'auto', flexShrink: 0 }} />}
+                  <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>{opt.label}</p>
+                    {opt.desc && <p style={{ margin: '3px 0 0', fontSize: 12, color: selected ? 'var(--primary)' : 'var(--text-tertiary)' }}>{opt.desc}</p>}
+                  </div>
+                  <div style={{
+                    width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
+                    background: selected ? 'var(--primary)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {selected && <Check size={10} weight="bold" style={{ color: '#fff' }} />}
+                  </div>
                 </motion.button>
               )
             })}
@@ -1018,61 +940,96 @@ function PreferenceDropdown({ icon, iconColor, label, value, options, onChange }
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const S = {
-  page:    { height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' },
-  header:  { display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)', flexShrink: 0 },
-  backBtn: { width: 34, height: 34, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 },
+  // Layout
+  page:        { height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' },
+  header:      { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)', flexShrink: 0 },
+  backBtn:     { width: 34, height: 34, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 },
   headerTitle: { margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' },
-  content: { flex: 1, overflowY: 'auto', padding: '0 14px 32px' },
-  prefsGrid: { display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 },
+  content:     { flex: 1, overflowY: 'auto', padding: '0 14px 36px' },
 
   // Profile card
-  profileCard:   { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 14px', marginTop: 14, borderRadius: 16, background: 'var(--bg-primary)', border: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left' },
-  profileAvatar: { width: 48, height: 48, borderRadius: 15, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  profileName:   { margin: 0, fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  profileSub:    { margin: '2px 0 0', fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileCard:      { width: '100%', display: 'flex', alignItems: 'center', gap: 13, padding: 16, marginTop: 16, borderRadius: 18, background: 'var(--bg-primary)', border: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left', position: 'relative', overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' },
+  profileCardAccent:{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'linear-gradient(90deg, var(--primary), #8b5cf6)', borderRadius: '18px 18px 0 0' },
+  profileAvatar:    { width: 50, height: 50, borderRadius: 15, flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(0,0,0,0.15)' },
+  avatarImg:        { width: '100%', height: '100%', objectFit: 'cover' },
+  profileName:      { margin: 0, fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileSub:       { margin: '3px 0 0', fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileChevron:   { width: 26, height: 26, borderRadius: 8, background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', flexShrink: 0 },
 
-  sectionLabel: { margin: '18px 0 7px 2px', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' },
-  card:         { borderRadius: 16, overflow: 'hidden', background: 'var(--bg-primary)', boxShadow: '0 1px 4px rgba(0,0,0,0.09)' },
-  rowIcon:      { width: 35, height: 35, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  rowLabel:     { margin: 0, fontSize: 14, fontWeight: 700 },
-  rowValue:     { margin: '2px 0 0', fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  // Stats row
+  statsRow: { display: 'flex', gap: 8, marginTop: 10 },
+  statPill: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 99, background: 'var(--bg-primary)', border: '1px solid', flexShrink: 0 },
+  statDot:  { width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
 
-  overlay:     { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  sheet:       { width: 'min(440px, calc(100vw - 32px))', background: 'var(--bg-primary)', borderRadius: 18, padding: '20px 22px 24px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' },
-  deleteSheet: { width: 'min(380px, calc(100vw - 32px))', background: 'var(--bg-primary)', borderRadius: 18, padding: '28px 22px 22px', boxShadow: '0 24px 64px rgba(0,0,0,0.5)', borderTop: '3px solid var(--danger)' },
+  // Sections
+  sectionLabel: { margin: '20px 0 7px 2px', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-tertiary)' },
+
+  // Setting cards
+  card:       { borderRadius: 16, overflow: 'hidden', background: 'var(--bg-primary)', boxShadow: '0 1px 6px rgba(0,0,0,0.08)', border: '1px solid var(--border)' },
+  settingRow: { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', border: 'none', textAlign: 'left', background: 'transparent', cursor: 'pointer' },
+  rowIcon:    { width: 36, height: 36, borderRadius: 11, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  rowLabel:   { margin: 0, fontSize: 14, fontWeight: 700 },
+  rowValue:   { margin: '2px 0 0', fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+
+  // Overlay + sheets
+  overlay:     { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, backdropFilter: 'blur(4px)' },
+  sheet:       { width: 'min(440px, calc(100vw - 32px))', background: 'var(--bg-primary)', borderRadius: 20, padding: '20px 22px 26px', boxShadow: '0 28px 72px rgba(0,0,0,0.5)' },
+  deleteSheet: { width: 'min(380px, calc(100vw - 32px))', background: 'var(--bg-primary)', borderRadius: 20, padding: '28px 22px 22px', boxShadow: '0 28px 72px rgba(0,0,0,0.5)', borderTop: '3px solid #ef4444' },
   sheetHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12 },
   sheetTitle:  { fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' },
   sheetClose:  { width: 28, height: 28, borderRadius: 9, border: 'none', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
 
-  modalHero:     { display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-secondary)', borderRadius: 12, padding: '12px 14px', marginBottom: 18 },
-  modalHeroIcon: { width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  modalHeroText: { margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.55 },
+  // Modal hero banner
+  modalHero:     { display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-secondary)', borderRadius: 13, padding: '13px 14px', marginBottom: 16 },
+  modalHeroIcon: { width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  modalHeroText: { margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 },
 
-  input:   { width: '100%', padding: '11px 12px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' },
-  eyeBtn:  { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4, display: 'flex' },
-  saveBtn: { marginTop: 18, width: '100%', padding: 13, borderRadius: 13, border: 'none', color: '#fff', fontSize: 14, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  stack:         { display: 'flex', flexDirection: 'column', gap: 12 },
-  matchRow:      { display: 'flex', alignItems: 'center', gap: 5, marginTop: 7, fontSize: 11 },
-  strengthBars:  { display: 'flex', gap: 4, marginBottom: 3 },
+  // Reset bar
+  resetBar:  { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 },
+  resetText: { margin: 0, fontSize: 12, color: 'var(--text-tertiary)', flex: 1 },
+  resetBtn:  { padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
 
-  chips:       { display: 'flex', gap: 10, marginBottom: 18 },
-  toggleList:  { display: 'flex', flexDirection: 'column' },
+  // Password modal
+  stack:        { display: 'flex', flexDirection: 'column', gap: 12 },
+  matchRow:     { display: 'flex', alignItems: 'center', gap: 5, marginTop: 8, fontSize: 11, fontWeight: 600 },
+  strengthBars: { display: 'flex', gap: 4 },
+  fieldLabel:   { margin: '0 0 7px', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.01em' },
+  input:        { width: '100%', padding: '11px 13px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' },
+  eyeBtn:       { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4, display: 'flex' },
+
+  // Notification toggles
+  toggleList:  { display: 'flex', flexDirection: 'column', marginBottom: 4 },
   toggleLabel: { margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' },
   toggleSub:   { margin: '2px 0 0', fontSize: 12, color: 'var(--text-tertiary)' },
-  fieldLabel:  { margin: '0 0 8px', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.01em' },
 
-  warningWrap: { textAlign: 'center', paddingBottom: 22 },
-  warningIcon: { width: 62, height: 62, borderRadius: 20, background: 'rgba(229,57,53,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: 'var(--danger)' },
+  // Privacy dropdowns
+  privacyList:    { display: 'flex', flexDirection: 'column', marginBottom: 16 },
+  prefDropdown:   { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', border: '1px solid var(--border)', borderRadius: 13, background: 'var(--bg-secondary)', cursor: 'pointer', position: 'relative', marginBottom: 9, justifyContent: 'space-between' },
+  prefDropdownIcon:{ width: 32, height: 32, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  prefLabel:      { margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' },
+  prefValue:      { margin: '2px 0 0', fontSize: 12, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  dropdownOpt:    { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 14px', border: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' },
+
+  // Save button
+  saveBtn: { marginTop: 18, width: '100%', padding: '14px 18px', borderRadius: 14, border: 'none', color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
+
+  // Delete modal
+  warningWrap: { textAlign: 'center', paddingBottom: 20 },
+  warningIcon: { width: 64, height: 64, borderRadius: 20, background: 'rgba(239,68,68,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#ef4444' },
   deleteTitle: { margin: '0 0 8px', fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' },
-  deleteText:  { margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 },
+  deleteText:  { margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65 },
   twoButtons:  { display: 'flex', gap: 10 },
-  secondaryBtn: { flex: 1, padding: 12, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
-  dangerBtn:   { flex: 1, padding: 12, borderRadius: 12, border: 'none', background: 'var(--danger)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  secondaryBtn:{ flex: 1, padding: '12px 0', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  dangerBtn:   { flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
 
-  blockedRow:  { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 2px', borderBottom: '1px solid var(--border)' },
-  unblockBtn:  { padding: '6px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
-  emptyCenter: { textAlign: 'center', padding: '32px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  // Blocked users
+  blockedRow:   { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 2px', borderBottom: '1px solid var(--border)' },
+  blockedName:  { margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  blockedHandle:{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-tertiary)' },
+  unblockBtn:   { padding: '7px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
+  emptyCenter:  { textAlign: 'center', padding: '36px 0', display: 'flex', flexDirection: 'column', alignItems: 'center' },
 
-  versionTag: { textAlign: 'center', margin: '22px 0 0', fontSize: 11, color: 'var(--text-tertiary)', letterSpacing: '0.05em' },
+  versionTag: { textAlign: 'center', margin: '24px 0 0', fontSize: 11, color: 'var(--text-tertiary)', letterSpacing: '0.05em' },
 }

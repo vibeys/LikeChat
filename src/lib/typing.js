@@ -15,10 +15,13 @@ import { useEffect, useRef, useState } from 'react'
 import { ref, set, remove, onValue, onDisconnect } from 'firebase/database'
 import { getAuth } from 'firebase/auth'
 import { rtdb } from './firebase'
+import { doc as fsDoc, updateDoc, serverTimestamp, onSnapshot, deleteField } from 'firebase/firestore'
+import { db } from './firebase'
 
-const STALE_MS    = 5_000
+const STALE_MS    = 8_000
 const DEBOUNCE_MS = 1_200
 const timers      = new Map()
+const rtdbBlocked = new Set()
 
 function clean(v) { return typeof v === 'string' ? v.trim() : '' }
 
@@ -35,18 +38,50 @@ async function writeTyping(convId, uid, isTyping) {
   const u   = clean(uid)
   if (!cid || !u) return
 
-  // Only write if this UID is currently authenticated — prevents permission_denied spam
-  if (currentUid() !== u) return
+  // NOTE: don't block writes here based on the SDK auth check. Some environments
+  // see a transient auth mismatch where `getAuth().currentUser` is briefly null
+  // despite the app-level user being available. Allow the write and let rules
+  // reject it if unauthorized; callers already pass the intended UID.
 
   const nodeRef = ref(rtdb, `typing/${cid}/${u}`)
   try {
+    if (rtdbBlocked.has(cid)) {
+      // Skip RTDB attempt and go straight to Firestore fallback
+      try {
+        const convRef = fsDoc(db, 'conversations', cid)
+        if (isTyping) await updateDoc(convRef, { [`typing.${u}`]: serverTimestamp() })
+        else await updateDoc(convRef, { [`typing.${u}`]: deleteField() })
+        return
+      } catch (e) {
+        if (!isPermDenied(e)) console.warn('[typing][fallback fs pre-check]', e?.message || e)
+        return
+      }
+    }
     if (isTyping) {
+      console.debug('[typing] write set', { convId: cid, uid: u, ts: Date.now() })
       await set(nodeRef, { typing: true, ts: Date.now() })
-      onDisconnect(nodeRef).remove().catch(() => {})
+      try { onDisconnect(nodeRef).remove().catch(() => {}) } catch (e) { /* ignore */ }
     } else {
+      console.debug('[typing] write remove', { convId: cid, uid: u })
       await remove(nodeRef)
     }
   } catch (err) {
+    if (isPermDenied(err)) {
+      rtdbBlocked.add(cid)
+      // Fallback: write typing timestamp into Firestore on the conversation doc.
+      try {
+        const convRef = fsDoc(db, 'conversations', cid)
+        if (isTyping) {
+          await updateDoc(convRef, { [`typing.${u}`]: serverTimestamp() })
+        } else {
+          await updateDoc(convRef, { [`typing.${u}`]: deleteField() })
+        }
+        return
+      } catch (e2) {
+        if (!isPermDenied(e2)) console.warn('[typing][fallback fs]', e2?.message || e2)
+        return
+      }
+    }
     if (!isPermDenied(err)) console.warn('[typing]', err?.message || err)
   }
 }
@@ -91,21 +126,70 @@ export function watchTyping(convId, callback) {
   const cid = clean(convId)
   if (!cid) return () => {}
 
-  return onValue(
-    ref(rtdb, `typing/${cid}`),
-    snap => {
-      const raw  = snap.val() || {}
-      const now  = Date.now()
-      const live = Object.fromEntries(
-        Object.entries(raw).filter(([, v]) => v?.ts && now - v.ts < STALE_MS)
-      )
-      callback(live)
-    },
-    err => {
-      if (!isPermDenied(err)) console.warn('[typing] watch', err?.message || err)
-      callback({})
+  // Primary: RTDB listener
+  try {
+    if (rtdbBlocked.has(cid)) {
+      const unsubFsDirect = onSnapshot(fsDoc(db, 'conversations', cid), snap => {
+        const data = snap.exists() ? (snap.data()?.typing || {}) : {}
+        const now = Date.now()
+        const live = Object.fromEntries(Object.entries(data).map(([k, v]) => {
+          const ts = v?.toMillis ? v.toMillis() : (v?.seconds ? v.seconds * 1000 : null)
+          return [k, { typing: true, ts }]
+        }).filter(([, v]) => v?.ts && now - v.ts < STALE_MS))
+        console.debug('[typing] watch live fs direct (cached blocked)', { convId: cid, data, live })
+        callback(live)
+      }, err2 => { console.warn('[typing] fs watch error', err2?.message); callback({}) })
+      return () => { try { unsubFsDirect?.() } catch (_) {} }
     }
-  )
+    const unsub = onValue(
+      ref(rtdb, `typing/${cid}`),
+      snap => {
+        const raw  = snap.val() || {}
+        const now  = Date.now()
+        const live = Object.fromEntries(
+          Object.entries(raw).filter(([, v]) => v?.ts && now - v.ts < STALE_MS)
+        )
+        console.debug('[typing] watch live rtdb', { convId: cid, raw, live })
+        callback(live)
+      },
+      err => {
+        console.warn('[typing] rtdb watch error', err?.message)
+        if (isPermDenied(err)) {
+          // Fallback to Firestore-based typing field
+          const unsubFs = onSnapshot(fsDoc(db, 'conversations', cid), snap => {
+            const data = snap.exists() ? (snap.data()?.typing || {}) : {}
+            const now = Date.now()
+            const live = Object.fromEntries(Object.entries(data).map(([k, v]) => {
+              const ts = v?.toMillis ? v.toMillis() : (v?.seconds ? v.seconds * 1000 : null)
+              return [k, { typing: true, ts }]
+            }).filter(([, v]) => v?.ts && now - v.ts < STALE_MS))
+            console.debug('[typing] watch live fs', { convId: cid, data, live })
+            callback(live)
+          }, err2 => { console.warn('[typing] fs watch error', err2?.message); callback({}) })
+          // return composed unsubscribe
+          return () => { try { unsubFs?.() } catch (_) {} }
+        } else {
+          callback({})
+        }
+      }
+    )
+
+    return () => { try { unsub() } catch (_) {} }
+  } catch (err) {
+    console.warn('[typing] failed to subscribe rtdb, fallback to fs', err?.message)
+    const unsubFs = onSnapshot(fsDoc(db, 'conversations', cid), snap => {
+      const data = snap.exists() ? (snap.data()?.typing || {}) : {}
+      const now = Date.now()
+      const live = Object.fromEntries(Object.entries(data).map(([k, v]) => {
+        const ts = v?.toMillis ? v.toMillis() : (v?.seconds ? v.seconds * 1000 : null)
+        return [k, { typing: true, ts }]
+      }).filter(([, v]) => v?.ts && now - v.ts < STALE_MS))
+      console.debug('[typing] watch live fs direct', { convId: cid, data, live })
+      callback(live)
+    }, err2 => { console.warn('[typing] fs watch error', err2?.message); callback({}) })
+
+    return () => { try { unsubFs?.() } catch (_) {} }
+  }
 }
 
 export function useTyping(convId, uid) {

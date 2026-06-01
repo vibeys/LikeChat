@@ -19,6 +19,8 @@ import {
   endCall,
   watchCallAnswer,
   watchCallEnd,
+  joinGroupCall,
+  leaveGroupCall,
 } from '../services/callService'
 import { getAvatarColor } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -80,6 +82,7 @@ export default function CallScreen({
   roomName,
   currentUser,
   onEnd,
+  isGroup,
 }) {
   const isVideo = callType === 'video'
 
@@ -118,19 +121,25 @@ export default function CallScreen({
     }
   }, [callId])
 
-  const finishEnd = useCallback(async () => {
-    if (endedRef.current) return
-    endedRef.current = true
+    const finishEnd = useCallback(async () => {
+      if (endedRef.current) return
+      endedRef.current = true
 
-    try {
-      await endCall(callId)
-    } catch (err) {
-      console.error('[CALL] endCall error:', err)
-    }
+      // For group calls, remove ourselves from participants (may end call if last to leave)
+      if (isGroup && currentUser?.uid) {
+        await leaveGroupCall(callId, currentUser.uid).catch(() => {})
+      } else if (!isGroup) {
+        // For private calls, end the call
+        try {
+          await endCall(callId)
+        } catch (err) {
+          console.error('[CALL] endCall error:', err)
+        }
+      }
 
-    await cleanup()
-    onEnd?.()
-  }, [callId, cleanup, onEnd])
+      await cleanup()
+      onEnd?.()
+    }, [callId, isGroup, currentUser, cleanup, onEnd])
 
   const finishDecline = useCallback(async () => {
     if (endedRef.current) return
@@ -217,10 +226,14 @@ export default function CallScreen({
         },
       })
 
-      apiRef.current = api
+            apiRef.current = api
 
       api.addListener('videoConferenceJoined', () => {
         if (!mountedRef.current) return
+        // Track ourselves in the session so others know who's in the call
+        if (isGroup && currentUser?.uid) {
+          joinGroupCall(callId, currentUser.uid).catch(() => {})
+        }
       })
 
       api.addListener('videoConferenceLeft', () => {

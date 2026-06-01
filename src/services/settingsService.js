@@ -19,10 +19,10 @@ import { getUser } from './userService'
 
 export const DEFAULT_PRIVACY = {
   profileVisible: 'friends',
-  showLastSeen: true,
-  showOnlineStatus: true,
-  allowFriendReqs: true,
-  readReceipts: true,
+  lastSeenVisibility: 'friends',
+  onlineStatusVisibility: 'friends',
+  allowFriendReqsVisibility: 'friends',
+  readReceiptsVisibility: 'friends',
 }
 
 export const DEFAULT_NOTIFICATIONS = {
@@ -45,12 +45,32 @@ export function sanitizePrivacy(privacy = {}) {
     ? privacy.profileVisible
     : DEFAULT_PRIVACY.profileVisible
 
+  const lastSeenVisibility = ['friends', 'nobody'].includes(privacy.lastSeenVisibility)
+    ? privacy.lastSeenVisibility
+    : privacy.showLastSeen === false ? 'nobody' : DEFAULT_PRIVACY.lastSeenVisibility
+
+  const onlineStatusVisibility = ['friends', 'nobody'].includes(privacy.onlineStatusVisibility)
+    ? privacy.onlineStatusVisibility
+    : privacy.showOnlineStatus === false ? 'nobody' : DEFAULT_PRIVACY.onlineStatusVisibility
+
+  const allowFriendReqsVisibility = ['all', 'friends', 'nobody'].includes(privacy.allowFriendReqsVisibility)
+    ? privacy.allowFriendReqsVisibility
+    : privacy.allowFriendReqs === false ? 'nobody' : DEFAULT_PRIVACY.allowFriendReqsVisibility
+
+  const readReceiptsVisibility = ['all', 'friends', 'nobody'].includes(privacy.readReceiptsVisibility)
+    ? privacy.readReceiptsVisibility
+    : privacy.readReceipts === false ? 'nobody' : DEFAULT_PRIVACY.readReceiptsVisibility
+
   return {
     profileVisible,
-    showLastSeen: asBoolean(privacy.showLastSeen, DEFAULT_PRIVACY.showLastSeen),
-    showOnlineStatus: asBoolean(privacy.showOnlineStatus, DEFAULT_PRIVACY.showOnlineStatus),
-    allowFriendReqs: asBoolean(privacy.allowFriendReqs, DEFAULT_PRIVACY.allowFriendReqs),
-    readReceipts: asBoolean(privacy.readReceipts, DEFAULT_PRIVACY.readReceipts),
+    lastSeenVisibility,
+    onlineStatusVisibility,
+    allowFriendReqsVisibility,
+    readReceiptsVisibility,
+    showLastSeen: lastSeenVisibility !== 'nobody',
+    showOnlineStatus: onlineStatusVisibility !== 'nobody',
+    allowFriendReqs: allowFriendReqsVisibility !== 'nobody',
+    readReceipts: readReceiptsVisibility !== 'nobody',
   }
 }
 
@@ -95,16 +115,17 @@ export function shouldDeliverNotification(notificationPrefs = {}, type = 'messag
  *  Pass viewerRelation='friend' to also enforce friend-only gating if needed in future.
  */
 export function canShowOnlineStatus(userData, viewerRelation = 'friend') {
-  // If the user has disabled their online status, never show it
-  if (!sanitizePrivacy(userData?.privacy).showOnlineStatus) return false
-  // Online status is only meaningful between friends (private chats)
-  // strangers can't chat with you anyway, so we default to showing it
+  const privacy = sanitizePrivacy(userData?.privacy)
+  if (privacy.onlineStatusVisibility === 'nobody') return false
+  if (privacy.onlineStatusVisibility === 'friends') return viewerRelation === 'friend'
   return true
 }
 
 /** Should we show this user's last seen timestamp to the viewer? */
 export function canShowLastSeen(userData, viewerRelation = 'friend') {
-  if (!sanitizePrivacy(userData?.privacy).showLastSeen) return false
+  const privacy = sanitizePrivacy(userData?.privacy)
+  if (privacy.lastSeenVisibility === 'nobody') return false
+  if (privacy.lastSeenVisibility === 'friends') return viewerRelation === 'friend'
   return true
 }
 

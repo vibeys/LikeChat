@@ -12,7 +12,7 @@ import {
   query,
   where,
   orderBy,
-  limitToLast,
+  limit,
   serverTimestamp,
   increment,
   arrayUnion,
@@ -284,6 +284,32 @@ async function _sendSystemMessage(convId, text) {
     createdAt: serverTimestamp(),
     editedAt: null,
   })
+}
+
+// Public helper: send a system-style message into a conversation
+// options: { eventType, actorUid, callType, metadata }
+export async function sendSystemMessage(convId, text, options = {}) {
+  const msgRef = doc(collection(db, 'conversations', convId, 'messages'))
+  const payload = {
+    senderId: 'system',
+    type: 'system',
+    text,
+    reactions: {},
+    readBy: [],
+    deliveredTo: [],
+    deletedFor: [],
+    unsent: false,
+    createdAt: serverTimestamp(),
+    editedAt: null,
+  }
+
+  if (options.eventType) payload.eventType = options.eventType
+  if (options.actorUid) payload.actorUid = options.actorUid
+  if (options.callType) payload.callType = options.callType
+  if (options.metadata) payload.metadata = options.metadata
+
+  await setDoc(msgRef, payload)
+  return msgRef.id
 }
 
 // ── Send a message ────────────────────────────────────────────────────────────
@@ -604,7 +630,7 @@ export function watchMessages(convId, callback) {
   const q = query(
     collection(db, 'conversations', convId, 'messages'),
     orderBy('createdAt', 'desc'),
-    limitToLast(50)
+    limit(50)
   )
 
   return onSnapshot(

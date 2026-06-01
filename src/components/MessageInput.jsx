@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { PaperPlaneRight, Paperclip, Smiley, X, Image, Video, File, Megaphone, At } from '@phosphor-icons/react'
-import { debounceTyping, setTyping } from '../lib/typing'
+import { debounceTyping, setTyping, stopTypingNow } from '../lib/typing'
 import { sendMessage, uploadFile, sendAnnouncement, sendMentionNotif } from '../services/chatService'
 
 const EMOJI_ROWS = [
@@ -16,6 +16,7 @@ export default function MessageInput({
   convId, currentUser, replyTo, onCancelReply,
   isGroup = false, isAdmin = false, convo = null,
   members = [], memberNames = {},
+  disabledMessage = '',
 }) {
   const [text,         setText]         = useState('')
   const [loading,      setLoading]      = useState(false)
@@ -43,6 +44,13 @@ export default function MessageInput({
     return () => document.removeEventListener('mousedown', handler)
   }, [showEmoji, showAttach])
 
+  useEffect(() => {
+    return () => {
+      if (!convId || !currentUser?.uid) return
+      stopTypingNow(convId, currentUser.uid)
+    }
+  }, [convId, currentUser?.uid])
+
   const mentionCandidates = isGroup
     ? members
         .filter(uid => uid !== currentUser?.uid)
@@ -52,7 +60,10 @@ export default function MessageInput({
         })
     : []
 
+  const isDisabled = Boolean(disabledMessage)
+
   const handleInput = e => {
+    if (isDisabled) return
     const val = e.target.value
     setText(val)
     e.target.style.height = 'auto'
@@ -73,6 +84,7 @@ export default function MessageInput({
     if (currentUser?.uid) {
       // debounceTyping handles writing true on first keystroke and auto-stops after silence
       // — one write per burst, not per keystroke, no console spam
+      console.debug('[MessageInput] debounceTyping call', { convId, uid: currentUser.uid })
       debounceTyping(convId, currentUser.uid, true)
     }
   }
@@ -94,6 +106,7 @@ export default function MessageInput({
   }
 
   const handleKeyDown = e => {
+    if (currentUser?.uid) debounceTyping(convId, currentUser.uid, true)
     if (showMentions && mentionCandidates.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex(i => Math.min(i + 1, mentionCandidates.length - 1)); return }
       if (e.key === 'ArrowUp')   { e.preventDefault(); setMentionIndex(i => Math.max(i - 1, 0)); return }
@@ -107,7 +120,7 @@ export default function MessageInput({
   }
 
   const handleSend = async () => {
-    if (!text.trim() || !currentUser?.uid) return
+    if (!text.trim() || !currentUser?.uid || isDisabled) return
     setLoading(true)
     const toSend = text.trim()
     setText('')
@@ -146,10 +159,13 @@ export default function MessageInput({
 
   const handleFileUpload = async (e, forcedType) => {
     const file = e.target.files[0]
-    if (!file || !currentUser?.uid) return
+    e.target.value = ''
+    if (!file || !currentUser?.uid || isDisabled) {
+      if (isDisabled) toast.error(disabledMessage)
+      return
+    }
     if (file.size > 25 * 1024 * 1024) {
       toast.error('Please choose a file smaller than 25MB')
-      e.target.value = ''
       return
     }
 
@@ -174,7 +190,6 @@ export default function MessageInput({
       toast.error(err?.message || 'Failed to upload file')
     } finally {
       setLoading(false)
-      e.target.value = ''
     }
   }
 
@@ -187,7 +202,13 @@ export default function MessageInput({
   const accentColor = isAnnounce ? 'var(--primary)' : 'var(--accent)'
 
   return (
-    <div className="px-3 py-3 border-t relative" style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}>
+    <div className="message-input-area px-3 py-3 border-t relative" style={{ background: 'var(--bg-1)', borderColor: 'var(--border)' }}>
+
+      {disabledMessage && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, padding: '10px 14px', borderRadius: 16, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', color: 'var(--danger)', fontSize: 13 }}>
+          <span>{disabledMessage}</span>
+        </div>
+      )}
 
       {replyTo && (
         <div className="flex items-center justify-between rounded-xl px-3 py-2 mb-2 border-l-2"
@@ -300,16 +321,19 @@ export default function MessageInput({
           value={text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder={isAnnounce ? 'Write announcement…' : 'Message'}
+          onPaste={() => { if (currentUser?.uid) debounceTyping(convId, currentUser.uid, true) }}
+          onBlur={() => { if (!isDisabled && currentUser?.uid) setTyping(convId, currentUser.uid, false) }}
+          placeholder={disabledMessage ? disabledMessage : isAnnounce ? 'Write announcement…' : 'Message'}
           rows={1}
+          disabled={isDisabled}
           className="flex-1 resize-none rounded-2xl px-4 py-2.5 text-sm outline-none transition-all duration-150 focus:shadow-md"
-          style={{ background: 'var(--bg-2)', color: 'var(--text-1)', lineHeight: '1.5', maxHeight: '128px', minHeight: '40px' }}
+          style={{ background: 'var(--bg-2)', color: 'var(--text-1)', lineHeight: '1.5', maxHeight: '128px', minHeight: '40px', opacity: isDisabled ? 0.6 : 1, cursor: isDisabled ? 'not-allowed' : 'text' }}
         />
 
                 <button onClick={handleSend}
-                disabled={loading || !text.trim()}
+                disabled={loading || !text.trim() || isDisabled}
                 className="p-2.5 text-white rounded-full transition-all duration-150 shrink-0 hover:scale-110 active:scale-95"
-                style={{ background: accentColor, opacity: loading || !text.trim() ? 0.4 : 1, cursor: loading || !text.trim() ? 'not-allowed' : 'pointer' }}>
+                style={{ background: accentColor, opacity: loading || !text.trim() || isDisabled ? 0.4 : 1, cursor: loading || !text.trim() || isDisabled ? 'not-allowed' : 'pointer' }}>
           <PaperPlaneRight size={16} />
         </button>
       </div>

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { onAuthStateChanged, reload } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 import { goOnline } from '../lib/presence'
 import { initNotifications } from '../services/notificationService'
@@ -39,6 +39,8 @@ export function AuthProvider({ children }) {
 
   const stopPresenceRef = useRef(() => {})
   const stopNotifRef = useRef(() => {})
+  const notifInitRef = useRef(false)
+  const stopUserRef = useRef(() => {})
 
   async function buildUser(firebaseUser) {
     try {
@@ -64,11 +66,28 @@ export function AuthProvider({ children }) {
           stopPresenceRef.current = () => {}
           stopNotifRef.current?.()
           stopNotifRef.current = () => {}
+          stopUserRef.current?.()
+          stopUserRef.current = () => {}
 
           if (firebaseUser) {
             const userData = await buildUser(firebaseUser)
             setUser(userData)
             setError(null)
+
+            // Keep the local `user` state in sync with Firestore in real-time.
+            // This ensures changes to blockedUsers, privacy, notifications, etc.
+            // propagate immediately without requiring a reload.
+            try {
+              const unsub = onSnapshot(doc(db, 'users', firebaseUser.uid), snap => {
+                const frc = snap.exists() ? snap.data() : {}
+                setUser(withDefaults(firebaseUser, frc))
+              }, err => {
+                console.warn('User doc watch error:', err?.message)
+              })
+              stopUserRef.current = unsub
+            } catch (err) {
+              console.warn('Failed to subscribe to user doc:', err)
+            }
 
             // Only go online in RTDB if the user hasn't disabled their online status
             const showOnlineStatus = userData?.privacy?.showOnlineStatus !== false
@@ -88,10 +107,14 @@ export function AuthProvider({ children }) {
               if (typeof stopNotif === 'function') {
                 stopNotifRef.current = stopNotif
               }
+              notifInitRef.current = true
+            } else {
+              notifInitRef.current = false
             }
           } else {
             setUser(null)
             setError(null)
+            notifInitRef.current = false
           }
 
           setLoading(false)
@@ -112,8 +135,34 @@ export function AuthProvider({ children }) {
       unsubAuth()
       stopPresenceRef.current?.()
       stopNotifRef.current?.()
+      stopUserRef.current?.()
     }
   }, [])
+
+  useEffect(() => {
+    if (!user?.uid) return
+
+    const wantsNotifications =
+      user.notifications?.messages ||
+      user.notifications?.mentions ||
+      user.notifications?.friendReqs ||
+      user.notifications?.appUpdates
+
+    if (wantsNotifications && !notifInitRef.current) {
+      const stopNotif = initNotifications(user.uid)
+      if (typeof stopNotif === 'function') {
+        stopNotifRef.current = stopNotif
+      }
+      notifInitRef.current = true
+      return
+    }
+
+    if (!wantsNotifications && notifInitRef.current) {
+      notifInitRef.current = false
+      stopNotifRef.current?.()
+      stopNotifRef.current = () => {}
+    }
+  }, [user?.uid, user?.notifications?.messages, user?.notifications?.mentions, user?.notifications?.friendReqs, user?.notifications?.appUpdates])
 
   async function refreshUser() {
     try {

@@ -279,7 +279,7 @@ export default function GroupPage() {
         await deleteDoc(d.ref)
       }
 
-      toast.success('Invite canceled')
+            toast.success('Invite canceled')
     } catch (err) {
       toast.error(err?.message || 'Failed to cancel invite')
     } finally {
@@ -297,7 +297,6 @@ export default function GroupPage() {
     setSaving(true)
     try {
       await removeGroupMember(convId, uid)
-      toast.success('Member removed')
     } catch (err) {
       toast.error(err?.message || 'Failed to remove member')
     } finally {
@@ -316,7 +315,6 @@ export default function GroupPage() {
         : [...new Set([...currentAdmins, uid])]
 
       await updateGroupInfo(convId, { admins: nextAdmins })
-      toast.success(currentAdmins.includes(uid) ? 'Admin removed' : 'Promoted to admin')
     } catch (err) {
       toast.error(err?.message || 'Failed to update admin')
     } finally {
@@ -355,10 +353,9 @@ export default function GroupPage() {
     }
   }
 
-  async function handleCopyGroupId() {
+    async function handleCopyGroupId() {
     try {
       await navigator.clipboard.writeText(convId)
-      toast.success('Group ID copied')
     } catch {
       toast.error('Copy failed')
     }
@@ -369,7 +366,6 @@ export default function GroupPage() {
     setToggling(true)
     try {
       await togglePin(convo.id, user.uid, !isPinned)
-      toast.success(isPinned ? 'Unpinned' : 'Pinned')
     } catch (err) {
       toast.error(err?.message || 'Failed to update pin')
     } finally {
@@ -382,7 +378,6 @@ export default function GroupPage() {
     setToggling(true)
     try {
       await toggleMute(convo.id, user.uid, !isMuted)
-      toast.success(isMuted ? 'Unmuted' : 'Muted')
     } catch (err) {
       toast.error(err?.message || 'Failed to update mute')
     } finally {

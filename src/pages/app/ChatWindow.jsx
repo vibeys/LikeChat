@@ -10,10 +10,11 @@ import {
   removeGroupMember, softDeleteMessage,
 } from '../../services/chatService'
 import {
-  startCall as initiateCall,
+    startCall as initiateCall,
   watchIncomingCalls,
   declineCall,
   markCallMissed,
+  acceptCall,
 } from '../../services/callService'
 import {
   sendCallNotification,
@@ -29,7 +30,7 @@ import TypingIndicator from '../../components/TypingIndicator'
 import CallScreen, { IncomingCallToast } from '../../components/CallScreen'
 import { getInitials, getAvatarColor, formatDate } from '../../lib/utils'
 import {
-  arrayRemove, arrayUnion, doc, updateDoc, getDoc, deleteDoc, collection, getDocs,
+  arrayRemove, arrayUnion, doc, updateDoc, getDoc, deleteDoc, collection, getDocs, onSnapshot,
 } from 'firebase/firestore'
 import { db } from '../../lib/firebase'
 import {
@@ -70,7 +71,7 @@ function groupByDate(msgs) {
 
 export default function ChatWindow() {
   const { convId } = useParams()
-  const { user } = useAuth()
+  const { user, refreshUser, setUser } = useAuth()
   const navigate = useNavigate()
 
   const [convo, setConvo] = useState(null)
@@ -91,6 +92,8 @@ export default function ChatWindow() {
   const isAtBottom = useRef(true)
 
   const { typingUsers } = useTyping(convId, user?.uid)
+  // Debug typing users map for troubleshooting typing indicator issues
+  console.debug('[ChatWindow] typingUsers', { convId, typingUsers })
 
   useEffect(() => { messagesRef.current = messages }, [messages])
 
@@ -108,6 +111,21 @@ export default function ChatWindow() {
     })
     return unsub
   }, [convId, user?.uid])
+
+  // When opening a conversation, always jump to the most recent messages.
+  // This ensures users see the bottom of the chat immediately on open.
+  useEffect(() => {
+    if (!convId) return
+    const t = setTimeout(() => {
+      try {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+        isAtBottom.current = true
+      } catch (err) {
+        console.warn('auto-scroll failed:', err)
+      }
+    }, 80)
+    return () => clearTimeout(t)
+  }, [convId])
 
   useEffect(() => {
     function onFocus() {
@@ -131,9 +149,17 @@ export default function ChatWindow() {
     if (!convo || convo.type === 'group') return
     const otherUid = convo.members?.find(uid => uid !== user.uid)
     if (!otherUid) return
-    getDoc(doc(db, 'users', otherUid))
-      .then(snap => { if (snap.exists()) setOtherUserData(snap.data()) })
-      .catch(() => {})
+
+    // Watch other user's profile in real-time so `blockedByOther` and privacy
+    // settings update immediately when they change (no reload required).
+    const unsub = onSnapshot(doc(db, 'users', otherUid), snap => {
+      if (snap.exists()) setOtherUserData(snap.data())
+      else setOtherUserData(null)
+    }, err => {
+      console.warn('watch other user error:', err?.message)
+    })
+
+    return () => unsub()
   }, [convo, user?.uid])
 
   useEffect(() => {
@@ -158,39 +184,56 @@ export default function ChatWindow() {
           onAnswer={() => { toast.dismiss(t.id); handleAnswerCall(incoming) }}
           onDecline={() => { toast.dismiss(t.id); handleDeclineCall(incoming.callId) }}
         />
-      ), { duration: 30000, id: `incoming-${incoming.callId}` })
+      ), { duration: 3000, id: `incoming-${incoming.callId}` })
     })
     return unsub
   }, [user?.uid, convo, convId, activeCall])
 
   const startCall = useCallback(async (type) => {
-    if (!convo || convo.type === 'group') return toast.error('Calls are only available in direct messages')
+        if (!convo) return toast.error('No conversation selected')
     if (activeCall) return toast.error('You are already in a call')
     const otherUid = convo.members?.find(uid => uid !== user.uid)
     setStartingCall(true)
     try {
-      const { callId, roomUrl, roomName } = await initiateCall({ callerId: user.uid, calleeId: otherUid, convId, type })
+      const calleeArg = convo.type === 'group' ? null : otherUid
+      const { callId, roomUrl, roomName } = await initiateCall({ callerId: user.uid, calleeId: calleeArg, convId, type })
 
-      sendCallNotification(otherUid, {
-        callerUid: user.uid,
-        callerName: user.displayName || 'Someone',
-        callerPhoto: user.photoURL || '',
-        convId,
-        callId,
-        callType: type,
-      }).catch(err => console.warn('Call notif failed:', err?.message))
+      if (convo.type === 'group') {
+        // Notify all group members
+        convo.members?.forEach(memberUid => {
+          if (memberUid === user.uid) return
+          sendCallNotification(memberUid, {
+            callerUid: user.uid,
+            callerName: user.displayName || 'Someone',
+            callerPhoto: user.photoURL || '',
+            convId,
+            callId,
+            callType: type,
+          }).catch(err => console.warn('Group call notif failed:', err?.message))
+        })
+      } else {
+        sendCallNotification(otherUid, {
+          callerUid: user.uid,
+          callerName: user.displayName || 'Someone',
+          callerPhoto: user.photoURL || '',
+          convId,
+          callId,
+          callType: type,
+        }).catch(err => console.warn('Call notif failed:', err?.message))
+      }
 
-      setActiveCall({
+            setActiveCall({
         callId,
         isCaller: true,
         callType: type,
         callerName: user.displayName || 'Me',
         callerPhoto: user.photoURL || null,
-        calleeName: convo.memberNames?.[otherUid] || 'Unknown',
-        calleePhoto: convo.memberPhotos?.[otherUid] || null,
+        calleeName: convo.type === 'group' ? (convo.groupName || 'Group') : (convo.memberNames?.[otherUid] || 'Unknown'),
+        calleePhoto: convo.type === 'group' ? (convo.groupPhoto || null) : (convo.memberPhotos?.[otherUid] || null),
         calleeUid: otherUid,
         roomUrl,
         roomName,
+        isGroupCall: convo.type === 'group',
       })
     } catch (err) {
       toast.error(err.message || 'Failed to start call')
@@ -217,7 +260,7 @@ export default function ChatWindow() {
   }, [user, convId])
 
   const handleAnswerCall = useCallback((incoming) => {
-    setActiveCall({
+        setActiveCall({
       callId: incoming.callId,
       isCaller: false,
       callType: incoming.type,
@@ -225,6 +268,7 @@ export default function ChatWindow() {
       callerPhoto: convo?.memberPhotos?.[incoming.callerId] || null,
       calleeName: user.displayName || 'Me',
       calleePhoto: user.photoURL || null,
+      isGroupCall: convo?.type === 'group',
     })
   }, [convo, user])
 
@@ -232,7 +276,29 @@ export default function ChatWindow() {
     try { await declineCall(callId) } catch {}
   }, [])
 
-  const handleCallEnd = useCallback(() => setActiveCall(null), [])
+    const handleCallEnd = useCallback(() => setActiveCall(null), [])
+
+  const handleJoinCall = useCallback(async (callId, roomUrl) => {
+    if (!callId) return toast.error('Call session not found')
+    if (activeCall) return toast.error('You are already in a call')
+    try {
+      await acceptCall(callId)
+            setActiveCall({
+        callId,
+        isCaller: false,
+        callType: 'audio',
+        callerName: convo?.groupName || 'Group',
+        callerPhoto: convo?.groupPhoto || null,
+        calleeName: user.displayName || 'Me',
+        calleePhoto: user.photoURL || null,
+        roomUrl,
+        roomName: null,
+        isGroupCall: true,
+      })
+    } catch (err) {
+      toast.error(err.message || 'Failed to join call')
+    }
+  }, [activeCall, convo, user])
 
   const isGroup = convo?.type === 'group'
   const otherUid = convo?.members?.find(uid => uid !== user.uid)
@@ -244,6 +310,15 @@ export default function ChatWindow() {
   const isMuted = convo?.mutedBy?.includes(user?.uid)
   const isPinned = convo?.pinnedBy?.includes(user?.uid)
   const isAdmin = convo?.admins?.includes(user?.uid)
+
+  const blockedOther = Boolean(otherUid && user?.blockedUsers?.includes(otherUid))
+  const blockedByOther = Boolean(otherUid && otherUserData?.blockedUsers?.includes(user.uid))
+  const isBlockedChat = blockedOther || blockedByOther
+  const blockedReason = blockedOther
+    ? 'You have blocked this user. Messaging is disabled until you unblock them.'
+    : blockedByOther
+      ? `${chatName} has blocked you. You cannot send messages in this chat.`
+      : ''
 
   // Respect the other user's privacy settings for online status and last seen
   // In a private chat, both users are friends (they must have connected to chat)
@@ -261,6 +336,7 @@ export default function ChatWindow() {
   const whoTyping = Object.keys(typingUsers || {})
     .filter(uid => uid !== user.uid)
     .map(uid => convo?.memberNames?.[uid]?.split(' ')[0] || 'Someone')
+  console.debug('[ChatWindow] whoTyping', whoTyping)
 
   const displayed = searchQ.trim()
     ? messages.filter(m => m.text?.toLowerCase().includes(searchQ.toLowerCase()))
@@ -303,8 +379,8 @@ export default function ChatWindow() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <TBtn onClick={() => setSearchMode(v => !v)} icon="search" />
-          {!isGroup && <TBtn onClick={() => startCall('audio')} icon={startingCall ? 'hourglass_empty' : 'call'} disabled={startingCall} />}
-          {!isGroup && <TBtn onClick={() => startCall('video')} icon={startingCall ? 'hourglass_empty' : 'videocam'} disabled={startingCall} />}
+                    <TBtn onClick={() => startCall('audio')} icon={startingCall ? 'hourglass_empty' : 'call'} disabled={startingCall || isBlockedChat} />
+          <TBtn onClick={() => startCall('video')} icon={startingCall ? 'hourglass_empty' : 'videocam'} disabled={startingCall || isBlockedChat} />
           <TBtn onClick={() => setShowInfo(v => !v)} icon="more_vert" />
         </div>
       </div>
@@ -320,6 +396,31 @@ export default function ChatWindow() {
             onChange={e => setSearchQ(e.target.value)}
           />
           <button onClick={() => { setSearchMode(false); setSearchQ('') }} style={{ fontSize: 13, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+        </div>
+      )}
+
+      {isBlockedChat && (
+        <div style={{ margin: '0 14px 10px', padding: '12px 14px', borderRadius: 16, background: blockedOther ? 'rgba(59,130,246,0.1)' : 'rgba(248,113,113,0.12)', border: '1px solid', borderColor: blockedOther ? 'rgba(59,130,246,0.2)' : 'rgba(248,113,113,0.3)', color: blockedOther ? 'var(--text-primary)' : 'var(--danger)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, lineHeight: 1.4 }}>{blockedReason}</span>
+            {blockedOther && (
+              <button
+                onClick={async () => {
+                  try {
+                    const userRef = doc(db, 'users', user.uid)
+                    await updateDoc(userRef, { blockedUsers: arrayRemove(otherUid) })
+                    await refreshUser()
+                    toast.success('User unblocked')
+                  } catch (err) {
+                    toast.error('Unable to unblock')
+                  }
+                }}
+                style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700 }}
+              >
+                Unblock
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -340,8 +441,9 @@ export default function ChatWindow() {
               isGroup={isGroup}
               senderName={isGroup ? convo.memberNames?.[item.senderId] : null}
               senderPhoto={isGroup ? convo.memberPhotos?.[item.senderId] : null}
-              onReply={setReplyTo}
+                            onReply={setReplyTo}
               memberNames={convo.memberNames || {}}
+              onJoinCall={isGroup ? handleJoinCall : undefined}
             />
           )
         )}
@@ -359,6 +461,7 @@ export default function ChatWindow() {
         convo={convo}
         members={convo?.members || []}
         memberNames={convo?.memberNames || {}}
+        disabledMessage={blockedReason}
       />
 
       <AnimatePresence>
@@ -387,12 +490,13 @@ export default function ChatWindow() {
               onStartCall={startCall}
               convId={convId}
               onConvoUpdate={setConvo}
+              refreshUser={refreshUser}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {activeCall && <CallScreen {...activeCall} currentUser={user} onEnd={handleCallEnd} />}
+      {activeCall && <CallScreen {...activeCall} currentUser={user} onEnd={handleCallEnd} isGroup={activeCall.isGroupCall} />}
     </div>
   )
 }
@@ -405,7 +509,8 @@ function TBtn({ icon, onClick, title, disabled }) {
   )
 }
 
-function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, isMuted, isPinned, currentUid, currentUser, otherUid, onClose, navigate, onStartCall, convId, onConvoUpdate }) {
+function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, isMuted, isPinned, currentUid, currentUser, otherUid, onClose, navigate, onStartCall, convId, onConvoUpdate, refreshUser }) {
+  const { setUser: setUserFromContext } = useAuth()
   const [announceText, setAnnounceText] = useState('')
   const [renameText, setRenameText] = useState(convo?.groupName || '')
   const [nickname, setNickname] = useState(convo?.nicknames?.[otherUid] || '')
@@ -423,7 +528,7 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
 
   const isBlocked = currentUser?.blockedUsers?.includes(otherUid)
 
-  async function handleToggleMute() {
+    async function handleToggleMute() {
     try {
       await toggleMute(convId, currentUid, !isMuted)
       onConvoUpdate(prev => ({
@@ -432,7 +537,6 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           ? (prev.mutedBy || []).filter(u => u !== currentUid)
           : [...(prev.mutedBy || []), currentUid],
       }))
-      toast.success(isMuted ? 'Notifications unmuted' : 'Notifications muted')
     } catch {
       toast.error('Failed')
     }
@@ -447,35 +551,50 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           ? (prev.pinnedBy || []).filter(u => u !== currentUid)
           : [...(prev.pinnedBy || []), currentUid],
       }))
-      toast.success(isPinned ? 'Unpinned' : 'Pinned to top')
     } catch {
       toast.error('Failed')
     }
   }
 
-  async function handleBlockToggle() {
+    async function handleBlockToggle() {
+    const userRef = doc(db, 'users', currentUid)
+    // Optimistically update local user state for immediate UI feedback.
     try {
-      const userRef = doc(db, 'users', currentUid)
+      setUserFromContext(prev => {
+        if (!prev) return prev
+        const cur = new Set(prev.blockedUsers || [])
+        if (isBlocked) {
+          cur.delete(otherUid)
+        } else {
+          cur.add(otherUid)
+        }
+        return { ...prev, blockedUsers: Array.from(cur) }
+      })
+
       if (isBlocked) {
         await updateDoc(userRef, { blockedUsers: arrayRemove(otherUid) })
-        toast.success('User unblocked')
       } else {
         await updateDoc(userRef, { blockedUsers: arrayUnion(otherUid) })
-        toast.success('User blocked')
       }
+
       setModal(null)
-    } catch {
+    } catch (err) {
+      // Revert optimistic change on failure
+      try {
+        // reload from server to restore authoritative state
+        if (typeof refreshUser === 'function') await refreshUser()
+      } catch (_) {}
+      console.error('Block toggle failed:', err)
       toast.error('Failed')
     }
   }
 
-  async function handleSaveNickname() {
+    async function handleSaveNickname() {
     setLoading(true)
     try {
       const nicknames = { ...(convo.nicknames || {}), [otherUid]: nickname.trim() }
       await updateDoc(doc(db, 'conversations', convId), { nicknames })
       onConvoUpdate(prev => ({ ...prev, nicknames }))
-      toast.success('Nickname saved')
       setModal(null)
     } catch {
       toast.error('Failed')
@@ -521,13 +640,12 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
     }
   }
 
-  async function handleRenameGroup() {
+    async function handleRenameGroup() {
     if (!renameText.trim()) return toast.error('Enter a group name')
     setLoading(true)
     try {
       await updateGroupInfo(convId, { groupName: renameText.trim() })
       onConvoUpdate(prev => ({ ...prev, groupName: renameText.trim() }))
-      toast.success('Group renamed')
       setModal(null)
     } catch {
       toast.error('Failed')
@@ -548,12 +666,11 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
     }
   }
 
-  async function handleRemoveMember(uid) {
+    async function handleRemoveMember(uid) {
     setLoading(true)
     try {
       await removeGroupMember(convId, uid)
       onConvoUpdate(prev => ({ ...prev, members: (prev.members || []).filter(u => u !== uid) }))
-      toast.success('Member removed')
       setSelectedMember(null)
       setModal(null)
     } catch (err) {
@@ -575,7 +692,6 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           ? (prev.admins || []).filter(u => u !== uid)
           : [...(prev.admins || []), uid],
       }))
-      toast.success(isCurrentlyAdmin ? 'Admin removed' : 'Made admin')
     } catch {
       toast.error('Failed')
     }
@@ -634,12 +750,10 @@ function InfoPanel({ convo, chatName, chatPhoto, avatarColor, isGroup, isAdmin, 
           )}
         </div>
 
-        {!isGroup && (
           <div style={{ display: 'flex', gap: 8, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
             <QuickBtn icon="call" label="Voice" onClick={() => { onClose(); onStartCall('audio') }} />
             <QuickBtn icon="videocam" label="Video" onClick={() => { onClose(); onStartCall('video') }} />
           </div>
-        )}
 
         <div style={{ padding: '8px 8px', borderBottom: '1px solid var(--border)' }}>
           <PanelLabel label="Actions" />

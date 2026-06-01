@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Checks, ArrowBendUpRight, Smiley, Trash, FileText, Download, Play } from '@phosphor-icons/react'
+import { Check, Checks, ArrowBendUpRight, Smiley, Trash, FileText, Download, Play, Phone, PhoneX, VideoCamera, Users, UserPlus, Megaphone } from '@phosphor-icons/react'
 import { formatTime } from '../lib/utils'
 import { addReaction, removeReaction, softDeleteMessage, unsendMessage } from '../services/chatService'
+import { watchCallStatus } from '../services/callService'
 
 const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '👎']
 
@@ -30,10 +31,20 @@ function renderWithMentions(text, memberNames = {}) {
   )
 }
 
-export default function MessageBubble({ msg, isMine, convId, currentUid, onReply, senderName, senderPhoto, isGroup, memberNames = {} }) {
+export default function MessageBubble({ msg, isMine, convId, currentUid, onReply, senderName, senderPhoto, isGroup, memberNames = {}, onJoinCall }) {
   const [showActions, setShowActions] = useState(false)
   const [showEmojis,  setShowEmojis]  = useState(false)
+  const [callActive, setCallActive] = useState(null) // null = unknown, true/false
   const longPressTimer = useRef(null)
+
+  // Watch call status for `call_started` messages with a callId
+  useEffect(() => {
+    if (msg?.eventType !== 'call_started' || !msg?.metadata?.callId) return
+    const unsub = watchCallStatus(msg.metadata.callId, status => {
+      setCallActive(status === 'ringing' || status === 'active')
+    })
+    return () => unsub()
+  }, [msg?.eventType, msg?.metadata?.callId])
 
   if (!msg) return null
 
@@ -41,7 +52,7 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 14px', animation: 'bubbleIn 0.18s ease-out' }}>
         <div style={{ maxWidth: 420, width: '100%', padding: '12px 16px', borderRadius: 16, background: 'rgba(30,144,255,0.1)', border: '1px solid rgba(30,144,255,0.3)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-          <span style={{ fontSize: 18, flexShrink: 0 }}>📢</span>
+          <Megaphone size={18} style={{ flexShrink: 0, color: 'var(--primary)' }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ margin: '0 0 3px', fontSize: 11, fontWeight: 800, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               {senderName || 'Admin'} · Announcement
@@ -56,6 +67,40 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
   }
 
   if (msg.type === 'system' || msg.senderId === 'system') {
+    const ev = msg.eventType || ''
+    const ct = msg.callType || ''
+    let Icon = null
+        if (ev === 'call_started') Icon = ct === 'video' ? <VideoCamera size={16} /> : <Phone size={16} />
+    else if (ev === 'call_joined') Icon = <UserPlus size={16} />
+    else if (ev === 'call_ended') Icon = ct === 'video' ? <VideoCamera size={16} /> : <Phone size={16} />
+    else if (ev === 'call_declined' || ev === 'missed_call') Icon = <PhoneX size={16} />
+
+        if (Icon) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 14px', animation: 'bubbleIn 0.18s ease-out' }}>
+          <div style={{ maxWidth: 420, width: '100%', padding: '10px 14px', borderRadius: 14, background: 'var(--bg-secondary)', border: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, background: 'var(--bg-3)', color: 'var(--text-primary)' }}>{Icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-primary)' }}>{msg.text}</p>
+            </div>
+                        {ev === 'call_started' && onJoinCall && msg.metadata?.callId && (
+                          <motion.button
+                            onClick={() => callActive !== false && onJoinCall(msg.metadata.callId, msg.metadata.roomUrl)}
+                            whileHover={{ scale: callActive !== false ? 1.03 : 1 }}
+                            whileTap={{ scale: callActive !== false ? 0.97 : 1 }}
+                            style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', background: callActive !== false ? 'var(--primary)' : 'var(--bg-3)', color: callActive !== false ? '#fff' : 'var(--text-tertiary)', fontSize: 12, fontWeight: 800, cursor: callActive !== false ? 'pointer' : 'default', opacity: callActive === null ? 0.6 : 1 }}
+                          >
+                            {callActive === false ? 'Ended' : callActive === null ? '...' : 'Join'}
+                          </motion.button>
+                        )}
+                        {ev === 'call_started' && !onJoinCall && callActive !== false && (
+                          <span style={{ flexShrink: 0, padding: '3px 8px', borderRadius: 6, background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>LIVE</span>
+                        )}
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 14px' }}>
         <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-secondary)', padding: '4px 12px', borderRadius: 999, fontStyle: 'italic' }}>{msg.text}</span>

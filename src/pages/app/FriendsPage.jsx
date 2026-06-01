@@ -28,7 +28,7 @@ import {
 import toast from 'react-hot-toast'
 
 export default function FriendsPage() {
-  const { user } = useAuth()
+  const { user, setUser } = useAuth()
   const navigate = useNavigate()
   const mounted = useRef(true)
   const searchTimer = useRef(null)
@@ -151,11 +151,10 @@ export default function FriendsPage() {
     }
   }
 
-  async function handleDecline(fromUid) {
+    async function handleDecline(fromUid) {
     setActing(a => ({ ...a, [fromUid]: true }))
     try {
       await declineFriendRequest(user.uid, fromUid)
-      toast.success('Request declined')
     } catch {
       toast.error('Failed to decline')
     } finally {
@@ -163,12 +162,15 @@ export default function FriendsPage() {
     }
   }
 
-  async function handleBlock(targetUid) {
+    async function handleBlock(targetUid) {
     if (!window.confirm('Block this user?')) return
     setActing(a => ({ ...a, [targetUid]: true }))
     try {
       await blockUser(user.uid, targetUid)
-      toast.success('User blocked')
+      // Optimistically update local user state so UI reflects block immediately
+      try {
+        setUser(prev => prev ? ({ ...prev, blockedUsers: Array.from(new Set([...(prev.blockedUsers || []), targetUid])) }) : prev)
+      } catch (_) {}
     } catch {
       toast.error('Failed to block user')
     } finally {

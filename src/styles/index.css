@@ -98,6 +98,22 @@
   --bubble-received-text:#f0f0f0;
 }
 
+@media (min-width: 768px) {
+  /* Desktop: anchor input to bottom of chat column and reserve space */
+  .message-input-area {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+  }
+
+  .message-area,
+  .messages-area {
+    padding-bottom: 72px; /* reserve height for input */
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    BASE RESET
 ───────────────────────────────────────────────────────────────────────── */
@@ -272,6 +288,23 @@ img { display: block; max-width: 100%; }
   .chat-main.active {
     display: flex;
     animation: slideUp 0.18s ease-out;
+  }
+
+  /* Mobile-only: reserve bottom space for the sticky input and respect safe-area */
+  .message-area,
+  .messages-area {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .message-input-area {
+     /* Use fixed positioning on mobile so the input and its background
+       always sit flush to the viewport bottom and cover the safe-area. */
+     position: fixed;
+     left: 0;
+     right: 0;
+     bottom: 0;
+     padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
   }
 
   .conversation-panel.hidden { display: none; }
@@ -665,6 +698,7 @@ img { display: block; max-width: 100%; }
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 0;
+  
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -824,7 +858,9 @@ img { display: block; max-width: 100%; }
   gap: 8px;
   align-items: flex-end;
   flex-shrink: 0;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding-bottom: 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .msg-input-area {
@@ -835,7 +871,7 @@ img { display: block; max-width: 100%; }
   gap: 8px;
   align-items: flex-end;
   flex-shrink: 0;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding-bottom: 10px;
 }
 
 .input-wrapper,
@@ -851,12 +887,24 @@ img { display: block; max-width: 100%; }
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
+/* Make the inner input row expand to fill the full width so the send button sits at the right edge */
+.message-input-area > .flex {
+  width: 100%;
+}
+
+.message-input-area textarea, .message-input-area input {
+  max-width: none;
+}
+
 .input-wrapper:focus-within,
 .msg-input-box:focus-within {
   background: var(--bg-2);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(30,144,255,0.1);
 }
+
+/* Keep message input anchored to bottom and respect safe-area insets */
+/* sticky behavior moved to mobile breakpoint to avoid affecting desktop layouts */
 
 .input-wrapper input,
 .input-wrapper textarea,
@@ -2077,7 +2125,8 @@ body.no-scroll { overflow: hidden; }
   .message-input-area,
   .msg-input-area {
     padding: 10px;
-    gap: 6px;
+    left: 0;
+    right: 0;
   }
 
   .input-wrapper,
