@@ -273,5 +273,5 @@ export default function MessageBubble({ msg, isMine, convId, currentUid, onReply
       )}
     </div>
   )
-// Note: The above code assumes the existence of certain CSS variables and classes for styling, as well as the presence of the specified services and utilities. Adjust as needed for your specific project setup.
+
 
